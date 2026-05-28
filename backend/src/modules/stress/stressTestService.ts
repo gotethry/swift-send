@@ -55,12 +55,20 @@ export class StressTestService {
 
   async runChaosTest(config: ChaosTestConfig): Promise<ChaosTestResult> {
     let downtimeInjected = 0;
+    let latencyInjected = 0;
+
     const decoratedLifecycle = {
       createTransfer: async (command: Parameters<TransferLifecycle['createTransfer']>[0]) => {
         if (Math.random() < config.apiDowntimeRate) {
           downtimeInjected += 1;
           throw new Error('Injected API downtime');
         }
+
+        if (config.blockchainLatencyMs > 0) {
+          latencyInjected += 1;
+          await this.delay(config.blockchainLatencyMs);
+        }
+
         return this.transfers.createTransfer(command);
       },
     } as TransferLifecycle;
@@ -71,7 +79,7 @@ export class StressTestService {
     return {
       ...baseline,
       downtimeInjected,
-      latencyInjected: 0,
+      latencyInjected,
       recoveredTransfers: 0,
       recoveryRate: 0,
     };
@@ -167,6 +175,10 @@ export class StressTestService {
     );
 
     return result;
+  }
+
+  private delay(ms: number) {
+    return new Promise<void>((resolve) => setTimeout(resolve, ms));
   }
 
   private async executeSingleTransfer(
