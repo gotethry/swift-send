@@ -52,6 +52,31 @@ export class StressTestService {
     this.logger = createLogger({ component: 'stressTestService' });
   }
 
+
+  async runChaosTest(config: ChaosTestConfig): Promise<ChaosTestResult> {
+    let downtimeInjected = 0;
+    const decoratedLifecycle = {
+      createTransfer: async (command: Parameters<TransferLifecycle['createTransfer']>[0]) => {
+        if (Math.random() < config.apiDowntimeRate) {
+          downtimeInjected += 1;
+          throw new Error('Injected API downtime');
+        }
+        return this.transfers.createTransfer(command);
+      },
+    } as TransferLifecycle;
+
+    const baseService = new StressTestService(decoratedLifecycle);
+    const baseline = await baseService.runStressTest(config);
+
+    return {
+      ...baseline,
+      downtimeInjected,
+      latencyInjected: 0,
+      recoveredTransfers: 0,
+      recoveryRate: 0,
+    };
+  }
+
   async runStressTest(config: StressTestConfig): Promise<StressTestResult> {
     const runId = `stress_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const errors: string[] = [];
