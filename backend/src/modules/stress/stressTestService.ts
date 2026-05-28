@@ -9,6 +9,19 @@ export interface StressTestConfig {
   walletId: string;
 }
 
+
+export interface ChaosTestConfig extends StressTestConfig {
+  apiDowntimeRate: number;
+  blockchainLatencyMs: number;
+}
+
+export interface ChaosTestResult extends StressTestResult {
+  downtimeInjected: number;
+  latencyInjected: number;
+  recoveredTransfers: number;
+  recoveryRate: number;
+}
+
 export interface StressTestResult {
   runId: string;
   config: StressTestConfig;
