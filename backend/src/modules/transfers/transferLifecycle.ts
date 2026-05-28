@@ -415,6 +415,11 @@ export class TransferLifecycle {
       return;
     }
 
+    if (this.shouldRollbackIncompleteFlow(transfer)) {
+      await this.rollbackIncompleteFlow(transfer, 'stale_incomplete_flow');
+      return;
+    }
+
     try {
       await this.wallets.settleEscrow({
         transferId: transfer.id,
@@ -487,6 +492,38 @@ export class TransferLifecycle {
 
       await this.repository.update(transfer);
     }
+  }
+
+
+  private async rollbackIncompleteFlow(transfer: TransferRecord, reason: string) {
+    const transferLogger = this.getLogger({ transferId: transfer.id, reason });
+    transferLogger.warn({ state: transfer.state, attempts: transfer.processingAttempts }, 'triggering rollback for incomplete flow');
+
+    await this.wallets.refundEscrow({
+      userId: transfer.userId,
+      transferId: transfer.id,
+      destinationAccount: transfer.fromWalletId,
+      amount: transfer.amount,
+      currency: transfer.currency,
+      metadata: { reason: 'rollback_safeguard', rollbackReason: reason },
+    });
+
+    transfer.lastError = `rollback:${reason}`;
+    this.appendStatus(transfer, 'failed', transfer.lastError);
+    await this.repository.update(transfer);
+
+    await this.eventBus.publish({
+      type: TransferEventType.Failed,
+      timestamp: new Date().toISOString(),
+      payload: {
+        userId: transfer.userId,
+        transferId: transfer.id,
+        amount: transfer.amount,
+        currency: transfer.currency,
+        recipientName: this.recipientName(transfer),
+        error: transfer.lastError,
+      },
+    });
   }
 
   private resolveTransactionHash(transfer: TransferRecord) {
