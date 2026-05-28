@@ -76,12 +76,41 @@ export class StressTestService {
     const baseService = new StressTestService(decoratedLifecycle);
     const baseline = await baseService.runStressTest(config);
 
+    const downtimeFailures = baseline.perTransferResults.filter(
+      (result) => !result.success && result.error?.includes('Injected API downtime'),
+    );
+
+    let recoveredTransfers = 0;
+    for (const failedResult of downtimeFailures) {
+      try {
+        await this.transfers.createTransfer({
+          idempotencyKey: `${failedResult.transferId}_recovery`,
+          userId: config.userId,
+          fromWalletId: config.walletId,
+          amount: config.amount,
+          currency: 'USDC',
+          recipient: {
+            type: 'wallet',
+            walletPublicKey: 'GRECOVERYWALLETTEST1234567890123456789012345678',
+            country: 'US',
+          },
+        });
+        recoveredTransfers += 1;
+      } catch (err) {
+        this.logger.warn({ transferId: failedResult.transferId, err }, 'recovery retry failed');
+      }
+    }
+
+    const recoveryRate = downtimeFailures.length > 0
+      ? Math.round((recoveredTransfers / downtimeFailures.length) * 10000) / 100
+      : 100;
+
     return {
       ...baseline,
+      recoveredTransfers,
+      recoveryRate,
       downtimeInjected,
       latencyInjected,
-      recoveredTransfers: 0,
-      recoveryRate: 0,
     };
   }
 
