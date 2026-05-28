@@ -386,6 +386,22 @@ export class TransferLifecycle {
     };
   }
 
+
+  private isIncompleteFlow(transfer: TransferRecord) {
+    const latestStatus = transfer.statusHistory[transfer.statusHistory.length - 1]?.state;
+    return (
+      (transfer.state === 'submitted' && !transfer.transactionHash) ||
+      (transfer.state === 'held' && transfer.processingAttempts > 0) ||
+      latestStatus === 'validated'
+    );
+  }
+
+  private shouldRollbackIncompleteFlow(transfer: TransferRecord) {
+    const transferAgeMs = Date.now() - new Date(transfer.createdAt).getTime();
+    const staleWindowMs = Math.max(config.queues.settlementDelayMs * 3, 30_000);
+    return this.isIncompleteFlow(transfer) && transferAgeMs >= staleWindowMs;
+  }
+
   private async settleTransfer(transferId: string) {
     const transferLogger = this.getLogger({ transferId });
     const transfer = await this.repository.findById(transferId);
