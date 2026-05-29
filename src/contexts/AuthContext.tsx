@@ -18,6 +18,7 @@ interface AuthContextType {
   setOnboardingStep: (step: string | null) => void;
   completeOnboarding: () => void;
   updateBalance: (newBalance: number) => void;
+  refreshUser: () => Promise<User | null>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -92,6 +93,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return await unlockAccountRequest();
   };
 
+  const refreshUser = async () => {
+    const result = await authMeRequest();
+    setAuthUser(result.authUser);
+    const refreshedUser = result.user ? parseUserDto(result.user) : null;
+    setUser(refreshedUser);
+    return refreshedUser;
+  };
+
   const logout = async () => {
     await logoutRequest();
     setUser(null);
@@ -126,6 +135,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setOnboardingStep,
         completeOnboarding,
         updateBalance,
+        refreshUser,
       }}
     >
       {children}</AuthContext.Provider>

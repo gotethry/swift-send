@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -85,6 +85,7 @@ const calculateFees = (amount: number) => {
 
 export default function SendMoney() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { user, transactionSigningSecret, updateBalance } = useAuth();
   const { connectionState } = useWallet();
   const { checkTransactionCompliance } = useCompliance();
@@ -127,6 +128,28 @@ export default function SendMoney() {
   const { data: countryInfo, isLoading: countryInfoLoading, isError: countryInfoError } = useCountryInfo(selectedContact?.countryCode ?? null);
   const draft = useTransferDraft('send_money_current');
   const suggestions = useTransferSuggestions(contacts, mockTransactions);
+
+  useEffect(() => {
+    const state = location.state as { recipientName?: string; recipientPhone?: string } | null;
+    if (!state?.recipientPhone) return;
+
+    const matchingContact = contacts.find((contact) => contact.phone === state.recipientPhone);
+    if (matchingContact) {
+      setSelectedContact(matchingContact);
+      setNewRecipient(null);
+      setStep('amount');
+      return;
+    }
+
+    setRecipientInput(state.recipientPhone);
+    setNewRecipient({
+      identifier: state.recipientPhone,
+      name: state.recipientName || state.recipientPhone,
+      type: 'phone',
+    });
+    setSelectedContact(null);
+    setStep('amount');
+  }, [location.state]);
 
   const parsedBulkTransfers = useMemo(() => {
     const lines = bulkInput
