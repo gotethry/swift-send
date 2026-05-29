@@ -180,6 +180,10 @@ export class ComplianceLogService {
     return log;
   }
 
+  getLogById(logId: string): ComplianceLog | null {
+    return this.logs.find((log) => log.id === logId) ?? null;
+  }
+
   /**
    * Get logs for a specific user
    */

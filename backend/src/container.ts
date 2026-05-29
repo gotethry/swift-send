@@ -20,6 +20,7 @@ import { RecurringPaymentService } from "./modules/recurring-payments/recurringP
 import { RecurringPaymentWorker } from "./modules/recurring-payments/recurringPaymentWorker";
 import { InMemoryRecurringPaymentRepository } from "./modules/recurring-payments/inMemoryRecurringPaymentRepository";
 import { ComplianceLogService } from "./modules/compliance/complianceLogService";
+import { ComplianceViolationAlertService } from "./modules/compliance/complianceViolationAlertService";
 import { AuditStorageService } from "./modules/compliance/auditStorageService";
 import { ReconciliationService } from "./modules/reconciliation/reconciliationService";
 import { StressTestService } from "./modules/stress/stressTestService";
@@ -49,7 +50,9 @@ export interface AppContainer {
     countryMetadata: CountryMetadataService;
     compliance: ComplianceService;
     complianceLog: ComplianceLogService;
+    complianceViolations: ComplianceViolationAlertService;
     fraud: FraudService;
+    fraudReview: FraudReviewService;
     notifications: NotificationService;
     notification: NotificationService;
     activity: ActivityService;
@@ -62,6 +65,8 @@ export interface AppContainer {
     adminAlerts: AdminAlertService;
     operationalMetrics: OperationalMetricsService;
     auditStorage: AuditStorageService;
+    reconciliation: ReconciliationService;
+    stressTest: StressTestService;
     authRiskEngine: AuthRiskEngine;
     deadLetterQueue: DeadLetterQueue;
     settlementAnalytics: SettlementAnalyticsService;
@@ -80,7 +85,7 @@ export function createContainer(): AppContainer {
   const compliance = new ComplianceService();
   const fraud = new FraudService();
   const wallets = new WalletService();
-  const contracts = new ContractService();
+  const contracts = new ContractService(eventBus);
   const countryMetadata = new CountryMetadataService();
   const transferRepository = new InMemoryTransferRepository(
     createDemoTransfers(),
@@ -124,6 +129,12 @@ export function createContainer(): AppContainer {
   const authRiskEngine = new AuthRiskEngine(eventBus);
   const settlementAnalytics = new SettlementAnalyticsService(eventBus);
   const adminAlerts = new AdminAlertService(eventBus);
+  const complianceViolations = new ComplianceViolationAlertService(
+    eventBus,
+    complianceLog,
+    adminAlerts,
+    contracts.complianceLimits,
+  );
   const operationalMetrics = new OperationalMetricsService();
   const transactionApproval = new TransactionApprovalService();
   const successRate = new SuccessRateService();
@@ -174,8 +185,10 @@ export function createContainer(): AppContainer {
       countryMetadata,
       compliance,
       complianceLog,
+      complianceViolations,
       fraud,
-    fraudReview,
+      fraudReview,
+      notifications,
       notification: notifications,
       activity,
       health,
@@ -187,6 +200,8 @@ export function createContainer(): AppContainer {
       adminAlerts,
       operationalMetrics,
       auditStorage,
+      reconciliation,
+      stressTest,
       authRiskEngine,
       deadLetterQueue,
       settlementAnalytics,

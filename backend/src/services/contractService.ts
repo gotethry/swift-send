@@ -1,4 +1,5 @@
 import { config } from '../config';
+import type { EventBus } from '../core/eventBus';
 import { logger } from '../logger';
 
 export interface ContractEvent {
@@ -20,7 +21,7 @@ export class ContractService {
   public readonly complianceLimits?: string;
   public readonly recurringPayments?: string;
 
-  constructor() {
+  constructor(private readonly eventBus?: EventBus) {
     this.simpleCounter = config.contracts.simpleCounter;
     this.accessGuard = config.contracts.accessGuard;
     this.remittanceEscrow = config.contracts.remittanceEscrow;
@@ -56,6 +57,13 @@ export class ContractService {
     }
 
     logger.info({ contractId, method, eventId: event.id }, 'contract event logged');
+
+    void this.eventBus?.publish({
+      type: 'contract.event_recorded',
+      timestamp,
+      payload: event,
+    });
+
     return outcome;
   }
 
