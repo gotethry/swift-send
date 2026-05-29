@@ -15,6 +15,7 @@ import { SpendingInsightsCard } from '@/components/SpendingInsightsCard';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { PhishingEducationPrompt } from '@/components/PhishingEducationPrompt';
 import { TrustedDeviceIndicator } from '@/components/TrustedDeviceIndicator';
+import { QuickActionsWidget } from '@/components/QuickActionsWidget';
 import { useAuth } from '@/contexts/AuthContext';
 import { useWallet } from '@/contexts/WalletContext';
 import { useSecurity } from '@/contexts/SecurityContext';
@@ -24,7 +25,7 @@ import { Send, Plus, Bell, ArrowRight, Shield, Info, Zap, Clock, TrendingDown, S
 
 export default function Dashboard() {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, refreshUser } = useAuth();
   const { connectionState } = useWallet();
   const { rates, changes, lastUpdated } = useExchangeRate();
   const { hasUnacknowledgedWarnings } = useSecurity();
@@ -154,6 +155,11 @@ export default function Dashboard() {
             exchangeRate={currentExchangeRate}
             lockedBalance={user?.lockedBalance || 0}
             pendingTransactions={user?.pendingTransactions || 0}
+          />
+
+          <QuickActionsWidget
+            transactions={recentTransactions}
+            onRefreshBalance={refreshUser}
           />
 
           {formattedRateAlert && (

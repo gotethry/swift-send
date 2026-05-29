@@ -131,6 +131,12 @@ export interface TransactionSearchParams {
 export interface TransactionSearchResult {
   items: Transaction[];
   total: number;
+  benchmark?: {
+    scanned: number;
+    matched: number;
+    elapsedMs: number;
+    indexUsed: boolean;
+  };
 }
 
 export async function searchTransactions(
@@ -147,13 +153,18 @@ export async function searchTransactions(
   if (params.offset !== undefined) qs.set('offset', String(params.offset));
 
   const response = await apiFetch(`/activity/transactions/search?${qs}`);
-  const body = await requireJson<{ items: TransactionsResponseDto['items']; total: number }>(
+  const body = await requireJson<{
+    items: TransactionsResponseDto['items'];
+    total: number;
+    benchmark?: TransactionSearchResult['benchmark'];
+  }>(
     response,
     'Could not search transactions',
   );
   return {
     items: body.items.map(parseTransactionDto),
     total: body.total,
+    benchmark: body.benchmark,
   };
 }
 

@@ -45,6 +45,13 @@ export interface TransactionSearchParams {
   offset?: number;
 }
 
+export interface TransactionSearchBenchmarkDto {
+  scanned: number;
+  matched: number;
+  elapsedMs: number;
+  indexUsed: boolean;
+}
+
 export interface SpendingInsightsDto {
   summary: {
     totalSent: number;
@@ -685,48 +692,13 @@ export class ActivityService {
   async searchTransactions(
     userId: string,
     params: TransactionSearchParams,
-  ): Promise<{ items: ActivityTransactionDto[]; total: number }> {
-    const all = await this.repository.listByUserId(userId);
-    let results = all.map((r) => this.toTransactionDto(r));
-
-    const q = params.q?.trim().toLowerCase();
-    if (q) {
-      results = results.filter(
-        (t) =>
-          t.recipientName.toLowerCase().includes(q) ||
-          t.recipientPhone.toLowerCase().includes(q) ||
-          t.id.toLowerCase().includes(q),
-      );
-    }
-
-    if (params.status) {
-      results = results.filter((t) => t.status === params.status);
-    }
-
-    if (params.dateFrom) {
-      const from = new Date(params.dateFrom).getTime();
-      results = results.filter((t) => new Date(t.timestamp).getTime() >= from);
-    }
-
-    if (params.dateTo) {
-      const to = new Date(params.dateTo).getTime();
-      results = results.filter((t) => new Date(t.timestamp).getTime() <= to);
-    }
-
-    if (params.amountMin !== undefined) {
-      results = results.filter((t) => t.amount >= params.amountMin!);
-    }
-
-    if (params.amountMax !== undefined) {
-      results = results.filter((t) => t.amount <= params.amountMax!);
-    }
-
-    const total = results.length;
-    const offset = Math.max(0, params.offset ?? 0);
-    const limit = Math.min(100, Math.max(1, params.limit ?? 50));
-    const items = results.slice(offset, offset + limit);
-
-    return { items, total };
+  ): Promise<{ items: ActivityTransactionDto[]; total: number; benchmark: TransactionSearchBenchmarkDto }> {
+    const result = await this.repository.searchByUserId(userId, params);
+    return {
+      items: result.records.map((record) => this.toTransactionDto(record)),
+      total: result.total,
+      benchmark: result.benchmark,
+    };
   }
 
   listNotifications(userId: string, limit = 5) {
