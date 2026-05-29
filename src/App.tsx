@@ -35,6 +35,9 @@ const AdminStellarMonitor = lazy(() => import("./pages/AdminStellarMonitor"));
 const AdminFailureAlerts = lazy(() => import("./pages/AdminFailureAlerts"));
 const AdminOperationalMetrics = lazy(() => import("./pages/AdminOperationalMetrics"));
 const AdminRegulatoryReports = lazy(() => import("./pages/AdminRegulatoryReports"));
+const AdminApiUsage = lazy(() => import("./pages/AdminApiUsage"));
+const ActivityHeatmap = lazy(() => import("./pages/ActivityHeatmap"));
+const InsightsDashboard = lazy(() => import("./pages/InsightsDashboard"));
 const VerificationFlow = lazy(() =>
   import("./components/VerificationFlow").then((module) => ({
     default: module.VerificationFlow,
@@ -154,6 +157,14 @@ function AppRoutes() {
           }
         />
         <Route
+          path="/insights"
+          element={
+            <ProtectedRoute>
+              <InsightsDashboard />
+            </ProtectedRoute>
+          }
+        />
+        <Route
           path="/refunds"
           element={
             <ProtectedRoute>
@@ -238,6 +249,14 @@ function AppRoutes() {
           element={
             <ProtectedRoute>
               <AdminOperationalMetrics />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/api-usage"
+          element={
+            <ProtectedRoute>
+              <AdminApiUsage />
             </ProtectedRoute>
           }
         />

@@ -52,11 +52,25 @@ export default function OnboardingWallet() {
 
       const storedProfile = localStorage.getItem('onboarding-profile');
       const profileData = storedProfile ? JSON.parse(storedProfile) : {};
+      const isBusiness = profileData.accountType === 'business';
 
       await completeOnboarding({
         name: profileData.name || 'User',
         email: authUser?.email || profileData.email,
         phone: authUser?.phone || profileData.phone,
+        accountType: isBusiness ? 'business' : 'personal',
+        companyName: isBusiness ? (profileData.companyName || `${profileData.name || 'Business'} LLC`) : undefined,
+        role: isBusiness ? (profileData.role || 'owner') : undefined,
+        teamMembers: isBusiness
+          ? [
+              {
+                name: profileData.name || 'User',
+                email: authUser?.email || profileData.email || '',
+                role: 'owner',
+                status: 'active',
+              },
+            ]
+          : undefined,
       });
 
       localStorage.removeItem('onboarding-profile');

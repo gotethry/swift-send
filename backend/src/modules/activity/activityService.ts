@@ -65,12 +65,26 @@ export interface SpendingInsightsDto {
     averageTransfer: number;
     topCategory?: string;
   };
+  weeklyTransferData: Array<{
+    week: string;
+    sent: number;
+    successful: number;
+    failed: number;
+    count: number;
+  }>;
   monthlyTransferData: Array<{
     month: string;
     sent: number;
     successful: number;
     failed: number;
     count: number;
+  }>;
+  recipientTrends: Array<{
+    recipientName: string;
+    amount: number;
+    count: number;
+    averageAmount: number;
+    lastTransferAt: string;
   }>;
   categoryData: Array<{
     category: string;
@@ -287,6 +301,7 @@ export class ActivityService {
     const successfulOrPending = transactions.filter((transaction) => transaction.status !== 'failed');
     const successfulOnly = transactions.filter((transaction) => transaction.status === 'completed');
     const now = new Date();
+    const recipientMap = new Map<string, { recipientName: string; amount: number; count: number; lastTransferAt: string }>();
 
     const summary = {
       totalSent: round2(successfulOrPending.reduce((sum, transaction) => sum + transaction.amount, 0)),
@@ -343,9 +358,37 @@ export class ActivityService {
       }
       if (transaction.status === 'failed') {
         existing.failed += transaction.amount;
+        }
+        existing.count += 1;
+        monthlyMap.set(monthKey, existing);
+      });
+
+    const weeklyMap = new Map<string, { week: string; sent: number; successful: number; failed: number; count: number }>();
+    transactions.forEach((transaction) => {
+      const date = new Date(transaction.timestamp);
+      const weekStart = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+      const utcDay = weekStart.getUTCDay() || 7;
+      weekStart.setUTCDate(weekStart.getUTCDate() - (utcDay - 1));
+      const weekKey = weekStart.toISOString().slice(0, 10);
+      const existing = weeklyMap.get(weekKey) || {
+        week: `Week of ${weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`,
+        sent: 0,
+        successful: 0,
+        failed: 0,
+        count: 0,
+      };
+
+      if (transaction.status !== 'failed') {
+        existing.sent += transaction.amount;
+      }
+      if (transaction.status === 'completed') {
+        existing.successful += transaction.amount;
+      }
+      if (transaction.status === 'failed') {
+        existing.failed += transaction.amount;
       }
       existing.count += 1;
-      monthlyMap.set(monthKey, existing);
+      weeklyMap.set(weekKey, existing);
     });
 
     const categoryMap = new Map<string, { category: string; value: number; count: number }>();
@@ -355,6 +398,22 @@ export class ActivityService {
       existing.value += transaction.amount;
       existing.count += 1;
       categoryMap.set(category, existing);
+    });
+
+    successfulOrPending.forEach((transaction) => {
+      const recipientName = transaction.recipientName || 'Unknown recipient';
+      const existing = recipientMap.get(recipientName) || {
+        recipientName,
+        amount: 0,
+        count: 0,
+        lastTransferAt: transaction.timestamp,
+      };
+      existing.amount += transaction.amount;
+      existing.count += 1;
+      if (new Date(transaction.timestamp).getTime() > new Date(existing.lastTransferAt).getTime()) {
+        existing.lastTransferAt = transaction.timestamp;
+      }
+      recipientMap.set(recipientName, existing);
     });
 
     const categoryData = Array.from(categoryMap.values())
@@ -368,6 +427,15 @@ export class ActivityService {
 
     const insights: SpendingInsightsDto = {
       summary,
+      weeklyTransferData: Array.from(weeklyMap.entries())
+        .sort(([a], [b]) => a.localeCompare(b))
+        .slice(-8)
+        .map(([, value]) => ({
+          ...value,
+          sent: round2(value.sent),
+          successful: round2(value.successful),
+          failed: round2(value.failed),
+        })),
       monthlyTransferData: Array.from(monthlyMap.entries())
         .sort(([a], [b]) => a.localeCompare(b))
         .slice(-6)
@@ -376,6 +444,14 @@ export class ActivityService {
           sent: round2(value.sent),
           successful: round2(value.successful),
           failed: round2(value.failed),
+        })),
+      recipientTrends: Array.from(recipientMap.values())
+        .sort((a, b) => b.amount - a.amount)
+        .slice(0, 5)
+        .map((entry) => ({
+          ...entry,
+          amount: round2(entry.amount),
+          averageAmount: round2(entry.count > 0 ? entry.amount / entry.count : 0),
         })),
       categoryData,
       topExpenses: successfulOnly

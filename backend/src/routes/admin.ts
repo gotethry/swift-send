@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { loginRateLimiter, recoveryRateLimiter, resendRateLimiter, verifyRateLimiter } from '../auth/rateLimiter';
 import { requireVerifiedSession } from '../middleware/authenticate';
 import { requireRole } from '../middleware/requireRole';
 import { getSession, saveSession } from '../auth/sessionStore';
@@ -22,11 +23,77 @@ interface DlqRetryBody {
   jobId: string;
 }
 
+interface ApiUsageRouteStat {
+  route: string;
+  count: number;
+  averageLatencyMs: number;
+  errorCount: number;
+}
+
 export default async function adminRoutes(fastify: FastifyInstance) {
   const adminGuards = { preHandler: [requireVerifiedSession, requireRole('admin')] };
 
   fastify.get('/admin/fees/analytics', adminGuards, async () => {
     return fastify.container.services.activity.getAdminFeeAnalytics();
+  });
+
+  fastify.get('/admin/api-usage', adminGuards, async () => {
+    const metrics = fastify.container.services.operationalMetrics.getMetrics();
+    const recentSamples = metrics.latency.samples.slice(-100);
+    const routeMap = new Map<string, { route: string; count: number; totalLatency: number; errorCount: number }>();
+
+    for (const sample of recentSamples) {
+      const existing = routeMap.get(sample.route) || {
+        route: sample.route,
+        count: 0,
+        totalLatency: 0,
+        errorCount: 0,
+      };
+      existing.count += 1;
+      existing.totalLatency += sample.latencyMs;
+      if (sample.statusCode >= 400) {
+        existing.errorCount += 1;
+      }
+      routeMap.set(sample.route, existing);
+    }
+
+    const routeStats: ApiUsageRouteStat[] = Array.from(routeMap.values())
+      .map((entry) => ({
+        route: entry.route,
+        count: entry.count,
+        averageLatencyMs: entry.count > 0 ? Math.round(entry.totalLatency / entry.count) : 0,
+        errorCount: entry.errorCount,
+      }))
+      .sort((a, b) => b.count - a.count);
+
+    return {
+      requestTracking: {
+        totalRequests: metrics.throughput.totalRequests,
+        averagePerMinute: metrics.throughput.averagePerMinute,
+        currentThroughput: metrics.throughput.current,
+        recentSamples: metrics.throughput.samples,
+      },
+      latency: metrics.latency,
+      rateLimits: {
+        login: {
+          ...loginRateLimiter.getStats(),
+          ...loginRateLimiter.getConfig(),
+        },
+        verify: {
+          ...verifyRateLimiter.getStats(),
+          ...verifyRateLimiter.getConfig(),
+        },
+        resend: {
+          ...resendRateLimiter.getStats(),
+          ...resendRateLimiter.getConfig(),
+        },
+        recovery: {
+          ...recoveryRateLimiter.getStats(),
+          ...recoveryRateLimiter.getConfig(),
+        },
+      },
+      routeStats,
+    };
   });
 
   /** GET /admin/rbac/status — view current Access Guard state */

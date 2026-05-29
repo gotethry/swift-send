@@ -35,6 +35,9 @@ import { OperationalMetricsService } from "./modules/system/operationalMetricsSe
 import { TransactionApprovalService } from "./modules/approvals/approvalService";
 import { SuccessRateService } from "./modules/transfers/successRateService";
 import { RegionalFeeService } from "./modules/fees/regionalFeeService";
+import { securityEventsService } from "./modules/securityEvents/securityEventsService";
+import { receiptService } from "./modules/receipts/receiptService";
+import { WebhookDispatcher } from "./modules/webhooks/webhookDispatcher";
 
 export interface AppContainer {
   config: AppConfig;
@@ -66,7 +69,9 @@ export interface AppContainer {
     transactionApproval: TransactionApprovalService;
     successRate: SuccessRateService;
     regionalFee: RegionalFeeService;
-
+    securityEvents: typeof securityEventsService;
+    receipts: typeof receiptService;
+    webhooks: WebhookDispatcher;
   };
 }
 
@@ -123,6 +128,11 @@ export function createContainer(): AppContainer {
   const transactionApproval = new TransactionApprovalService();
   const successRate = new SuccessRateService();
   const regionalFee = new RegionalFeeService();
+
+  // Additional services
+  const securityEvents = securityEventsService; // singleton
+  const receipts = receiptService; // singleton
+  const webhookDispatcher = new WebhookDispatcher(eventBus);
 
   recurringWorker.start();
   stellarMonitor.start();
@@ -184,6 +194,9 @@ export function createContainer(): AppContainer {
       transactionApproval,
       successRate,
       regionalFee,
+      securityEvents,
+      receipts,
+      webhooks: webhookDispatcher,
 
     },
   };

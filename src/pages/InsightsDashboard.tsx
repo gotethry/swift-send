@@ -24,7 +24,18 @@ import { Button } from '@/components/ui/button';
 import { fetchSpendingInsights } from '@/lib/activity';
 import { useNavigate } from 'react-router-dom';
 import type { SpendingInsights } from '@/types/activity';
-import { TRANSFER_PURPOSES, getPurposeByCode } from '@/data/transferPurposes';
+import { getPurposeByCode } from '@/data/transferPurposes';
+import {
+  BarChart3,
+  Calendar,
+  CheckCircle2,
+  DollarSign,
+  List,
+  Tag,
+  TrendingUp,
+  XCircle,
+  Users,
+} from 'lucide-react';
 
 const CATEGORY_COLORS = [
   'hsl(var(--primary))',
@@ -63,9 +74,11 @@ export default function InsightsDashboard() {
         ) : (
           <>
             <SummaryCards summary={data?.summary} isLoading={isLoading} />
+            <WeeklyTrendsChart data={data?.weeklyTransferData} isLoading={isLoading} />
             <HeatmapCard />
             <MonthlyTrendsChart data={data?.monthlyTransferData} isLoading={isLoading} />
             <ComparativeInsights data={data?.monthlyTransferData} isLoading={isLoading} />
+            <RecipientTrendsList recipients={data?.recipientTrends} isLoading={isLoading} />
             <CategoryBreakdownChart data={data?.categoryData} isLoading={isLoading} />
             <PurposeBreakdownChart topExpenses={data?.topExpenses} />
             <TopExpensesList expenses={data?.topExpenses} isLoading={isLoading} />
@@ -75,6 +88,120 @@ export default function InsightsDashboard() {
 
       <BottomNav />
     </div>
+  );
+}
+
+function WeeklyTrendsChart({
+  data,
+  isLoading,
+}: {
+  data?: SpendingInsights['weeklyTransferData'];
+  isLoading: boolean;
+}) {
+  return (
+    <Card className="border-border/60">
+      <CardHeader className="pb-2">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <BarChart3 className="w-4 h-4 text-primary" />
+          Weekly Trends
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <SkeletonBarChart bars={6} />
+        ) : !data || data.length === 0 ? (
+          <EmptyState message="No weekly data yet." />
+        ) : (
+          <ResponsiveContainer width="100%" height={200}>
+            <BarChart data={data} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+              <XAxis
+                dataKey="week"
+                tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }}
+                axisLine={false}
+                tickLine={false}
+              />
+              <YAxis
+                tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }}
+                axisLine={false}
+                tickLine={false}
+              />
+              <Tooltip
+                contentStyle={{
+                  background: 'hsl(var(--card))',
+                  border: '1px solid hsl(var(--border))',
+                  borderRadius: '8px',
+                  fontSize: 12,
+                }}
+                formatter={(value: number) => [`$${value.toFixed(2)}`, '']}
+              />
+              <Bar dataKey="sent" name="Sent" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="successful" name="Completed" fill="#10b981" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="failed" name="Failed" fill="#ef4444" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function RecipientTrendsList({
+  recipients,
+  isLoading,
+}: {
+  recipients?: SpendingInsights['recipientTrends'];
+  isLoading: boolean;
+}) {
+  return (
+    <Card className="border-border/60">
+      <CardHeader className="pb-2">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <Users className="w-4 h-4 text-primary" />
+          Recipient Trends
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <div className="space-y-3">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <Skeleton key={i} className="h-14 rounded-xl" />
+            ))}
+          </div>
+        ) : !recipients || recipients.length === 0 ? (
+          <EmptyState message="No recipient data yet." />
+        ) : (
+          <div className="space-y-2">
+            {recipients.map((recipient) => (
+              <div
+                key={recipient.recipientName}
+                className="rounded-xl border border-border/60 bg-muted/30 px-4 py-3"
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-foreground truncate">
+                      {recipient.recipientName}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {recipient.count} transfer{recipient.count === 1 ? '' : 's'} • last sent{' '}
+                      {recipient.lastTransferAt.toLocaleDateString()}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-sm font-semibold text-foreground">
+                      ${recipient.amount.toFixed(2)}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Avg ${recipient.averageAmount.toFixed(2)}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

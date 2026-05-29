@@ -32,6 +32,15 @@ interface OnboardingBody {
   name?: string;
   email?: string;
   phone?: string;
+  accountType?: 'personal' | 'business';
+  companyName?: string;
+  role?: 'owner' | 'finance_admin' | 'operator';
+  teamMembers?: Array<{
+    name: string;
+    email: string;
+    role: 'owner' | 'admin' | 'approver' | 'viewer';
+    status: 'active' | 'invited';
+  }>;
 }
 
 function sessionToAuthUser(session: { id: string; email?: string; phone?: string; verified: boolean; hasWallet: boolean; role?: 'admin' | 'user' }) {
@@ -408,6 +417,23 @@ export default async function authRoutes(fastify: FastifyInstance) {
     }
 
     const body = request.body || {};
+    const accountType = body.accountType === 'business' ? 'business' : 'personal';
+    const businessProfile = accountType === 'business'
+      ? {
+          companyName: body.companyName || `${body.name || session.user?.name || 'Business'} LLC`,
+          role: body.role || 'owner',
+          teamSize: body.teamMembers?.length || 1,
+          permissions: ['send_transfers', 'view_reports', 'manage_team'],
+          teamMembers: body.teamMembers || [
+            {
+              name: body.name || session.user?.name || 'User',
+              email: session.email || body.email || '',
+              role: 'owner',
+              status: 'active',
+            },
+          ],
+        }
+      : undefined;
     const newUser: PublicUser = {
       id: session.id,
       name: body.name || 'User',
@@ -421,6 +447,8 @@ export default async function authRoutes(fastify: FastifyInstance) {
       onboardingCompleted: true,
       walletAddress: `wallet_${session.id}`,
       wallets: [], // Initialize with empty wallets array
+      accountType,
+      businessProfile,
       createdAt: new Date().toISOString(),
     };
 
@@ -434,6 +462,62 @@ export default async function authRoutes(fastify: FastifyInstance) {
 
     return reply.send({
       user: newUser,
+      authUser: sessionToAuthUser(session),
+      session: getSessionInfo(session),
+    });
+  });
+
+  fastify.post<{
+    Body: {
+      companyName: string;
+      role: 'owner' | 'finance_admin' | 'operator';
+      teamMembers: Array<{
+        name: string;
+        email: string;
+        role: 'owner' | 'admin' | 'approver' | 'viewer';
+        status: 'active' | 'invited';
+      }>;
+    };
+  }>('/auth/business/profile', { preHandler: [authenticate] }, async (request, reply) => {
+    const token = request.user as JwtSessionPayload;
+    const session = getSession(token.sub);
+    if (!session || !session.user) {
+      clearAuthCookie(reply);
+      return reply.status(401).send({ error: 'Session expired' });
+    }
+
+    const body = request.body;
+    const companyName = body?.companyName?.trim();
+    if (!companyName) {
+      return reply.status(400).send({ error: 'companyName is required' });
+    }
+
+    const teamMembers = Array.isArray(body.teamMembers) && body.teamMembers.length > 0
+      ? body.teamMembers
+      : [
+          {
+            name: session.user.name,
+            email: session.user.email || '',
+            role: 'owner' as const,
+            status: 'active' as const,
+          },
+        ];
+
+    session.user.accountType = 'business';
+    session.user.businessProfile = {
+      companyName,
+      role: body.role || 'owner',
+      teamSize: teamMembers.length,
+      permissions: ['send_transfers', 'view_reports', 'manage_team'],
+      teamMembers,
+    };
+    saveSession(session);
+    await deleteCachedKey(`auth:me:${session.id}`);
+
+    await setAuthCookie(reply, session);
+
+    return reply.send({
+      user: session.user,
       authUser: sessionToAuthUser(session),
       session: getSessionInfo(session),
     });

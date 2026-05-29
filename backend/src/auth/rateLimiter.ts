@@ -204,6 +204,10 @@ export class RateLimiter {
       totalAttempts,
     };
   }
+
+  getConfig(): RateLimitConfig {
+    return this.config;
+  }
 }
 
 // Export singleton instances for different endpoints

@@ -13,6 +13,9 @@ import recurringPaymentRoutes from "./routes/recurringPayments";
 import contractRoutes from "./routes/contracts";
 import refundsRoutes from "./routes/refunds";
 import notificationRoutes from "./routes/notifications";
+import receiptRoutes from "./routes/receipts";
+import securityEventsRoutes from "./routes/securityEvents";
+
 import complianceRoutes from "./routes/compliance";
 import errorRoutes from "./routes/errors";
 import feeRoutes from "./routes/fees";
@@ -91,6 +94,9 @@ export async function buildApp() {
   await app.register(contractRoutes, { prefix });
   await app.register(refundsRoutes, { prefix });
   await app.register(notificationRoutes, { prefix });
+  await app.register(receiptRoutes, { prefix });
+  await app.register(securityEventsRoutes, { prefix });
+
   await app.register(walletRoutes, { prefix });
   await app.register(reportRoutes, { prefix });
   await app.register(complianceRoutes, { prefix });

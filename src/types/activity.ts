@@ -61,12 +61,28 @@ export interface SpendingCategory {
   count: number;
 }
 
+export interface SpendingWeek {
+  week: string;
+  sent: number;
+  successful: number;
+  failed: number;
+  count: number;
+}
+
 export interface SpendingMonth {
   month: string;
   sent: number;
   successful: number;
   failed: number;
   count: number;
+}
+
+export interface RecipientTrend {
+  recipientName: string;
+  amount: number;
+  count: number;
+  averageAmount: number;
+  lastTransferAt: Date;
 }
 
 export interface TopExpense {
@@ -91,7 +107,9 @@ export interface SpendingInsights {
     averageTransfer: number;
     topCategory?: string;
   };
+  weeklyTransferData: SpendingWeek[];
   monthlyTransferData: SpendingMonth[];
+  recipientTrends: RecipientTrend[];
   categoryData: SpendingCategory[];
   topExpenses: TopExpense[];
   healthScore?: FinancialHealthScore;
@@ -134,4 +152,3 @@ export interface RefundsResponse {
   items: RefundRecord[];
   total: number;
 }
-

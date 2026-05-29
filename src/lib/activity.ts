@@ -36,12 +36,26 @@ interface TransactionsResponseDto {
 
 interface SpendingInsightsDto {
   summary: SpendingInsights['summary'];
+  weeklyTransferData: Array<{
+    week: string;
+    sent: number;
+    successful: number;
+    failed: number;
+    count: number;
+  }>;
   monthlyTransferData: Array<{
     month: string;
     sent: number;
     successful: number;
     failed: number;
     count: number;
+  }>;
+  recipientTrends: Array<{
+    recipientName: string;
+    amount: number;
+    count: number;
+    averageAmount: number;
+    lastTransferAt: string;
   }>;
   categoryData: SpendingInsights['categoryData'];
   topExpenses: Array<{
@@ -175,7 +189,12 @@ export async function fetchSpendingInsights(): Promise<SpendingInsights> {
   const body = await requireJson<SpendingInsightsDto>(response, 'Could not load spending insights');
   return {
     summary: body.summary,
+    weeklyTransferData: body.weeklyTransferData,
     monthlyTransferData: body.monthlyTransferData,
+    recipientTrends: body.recipientTrends.map((trend) => ({
+      ...trend,
+      lastTransferAt: new Date(trend.lastTransferAt),
+    })),
     categoryData: body.categoryData,
     topExpenses: body.topExpenses.map((expense) => ({
       ...expense,

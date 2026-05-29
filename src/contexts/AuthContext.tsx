@@ -6,7 +6,7 @@ interface AuthContextType {
   user: User | null;
   authUser: AuthUser | null;
   isAuthenticated: boolean;
-  onboardingStep: string | null;
+  onboardingStep: number | null;
   forceVerification: boolean;
   transactionSigningSecret: string | null;
   login: (identifier: string) => Promise<ReturnType<typeof loginRequest>>;
@@ -15,10 +15,11 @@ interface AuthContextType {
   resendCode: () => Promise<ReturnType<typeof resendCodeRequest>>;
   unlockAccount: () => Promise<ReturnType<typeof unlockAccountRequest>>;
   clearForceVerification: () => void;
-  setOnboardingStep: (step: string | null) => void;
+  setOnboardingStep: (step: number | null) => void;
   completeOnboarding: () => void;
   updateBalance: (newBalance: number) => void;
   refreshUser: () => Promise<User | null>;
+  refreshSession: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -26,13 +27,26 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
-  const [onboardingStep, setOnboardingStep] = useState<string | null>(null);
+  const [onboardingStep, setOnboardingStep] = useState<number | null>(null);
   const [forceVerification, setForceVerification] = useState(false);
+
+  const refreshSession = async () => {
+    try {
+      const result = await authMeRequest();
+      setAuthUser(result.authUser);
+      setUser(result.user ? parseUserDto(result.user) : null);
+      if (result.onboardingRequired) {
+        setOnboardingStep(1);
+      }
+    } catch {
+      // ignore restore failures
+    }
+  };
 
   useEffect(() => {
     let mounted = true;
 
-    const restoreSession = async () => {
+    void (async () => {
       try {
         const result = await authMeRequest();
         if (!mounted) return;
@@ -44,9 +58,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } catch {
         // ignore restore failures
       }
-    };
-
-    void restoreSession();
+    })();
 
     const handleReauthRequired = () => {
       // Preserve auth state but force the UI into OTP verification step.
@@ -136,6 +148,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         completeOnboarding,
         updateBalance,
         refreshUser,
+        refreshSession,
       }}
     >
       {children}</AuthContext.Provider>

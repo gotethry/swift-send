@@ -1,4 +1,4 @@
-import { Shield, AlertTriangle, Activity, BarChart3, Server, FileWarning, Bell, Gauge, FileText, Trendingup } from "lucide-react";
+import { Shield, AlertTriangle, Activity, BarChart3, Server, FileWarning, Bell, Gauge, FileText, TrendingUp, Route } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Link } from "react-router-dom";
 
@@ -58,6 +58,13 @@ const adminCards = [
     icon: Gauge,
     href: "/admin/metrics",
     color: "text-blue-500",
+  },
+  {
+    title: "API Rate Usage",
+    description: "Track request volume and limiter lockouts across the platform",
+    icon: Route,
+    href: "/admin/api-usage",
+    color: "text-indigo-500",
   },
   {
     title: "Regulatory Reports",

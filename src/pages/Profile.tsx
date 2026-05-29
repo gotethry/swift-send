@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useTheme } from 'next-themes';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
 import { BottomNav } from '@/components/BottomNav';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import WalletConnectionDialog, { WalletStatusIndicator } from '@/components/WalletConnection';
@@ -9,6 +10,7 @@ import { ComplianceDashboard } from '@/components/ComplianceDashboard';
 import { TrustedDeviceIndicator } from '@/components/TrustedDeviceIndicator';
 import { useAuth } from '@/contexts/AuthContext';
 import { useWallet } from '@/contexts/WalletContext';
+import { updateBusinessProfile } from '@/lib/auth';
 import {
   User,
   Phone,
@@ -25,8 +27,6 @@ import {
   Twitter,
   Linkedin,
   Send as SendIcon,
-  Copy,
-  Check,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Progress } from '@/components/ui/progress';
@@ -36,11 +36,25 @@ import { Switch } from '@/components/ui/switch';
 
 export default function Profile() {
   const navigate = useNavigate();
-  const { resolvedTheme, setTheme } = useTheme();
-  const { user, logout } = useAuth();
+  const { user, logout, refreshSession } = useAuth();
   const { connectionState, disconnectWallet } = useWallet();
-  const { mode, setMode, isLowBandwidth } = useBandwidth();
+  const { setMode, isLowBandwidth } = useBandwidth();
   const [showWalletDialog, setShowWalletDialog] = useState(false);
+  const [businessDraft, setBusinessDraft] = useState({
+    companyName: '',
+    role: 'owner' as 'owner' | 'finance_admin' | 'operator',
+    teamMembers: [] as Array<{
+      name: string;
+      email: string;
+      role: 'owner' | 'admin' | 'approver' | 'viewer';
+      status: 'active' | 'invited';
+    }>,
+  });
+  const [newMember, setNewMember] = useState({
+    name: '',
+    email: '',
+    role: 'viewer' as 'owner' | 'admin' | 'approver' | 'viewer',
+  });
 
   const handleLogout = () => {
     logout();
@@ -63,6 +77,62 @@ export default function Profile() {
 
   const totalCompleteness = completenessCriteria.reduce((acc, curr) => acc + (curr.completed ? curr.weight : 0), 0);
   const missingItems = completenessCriteria.filter(c => !c.completed);
+
+  useEffect(() => {
+    const profile = user?.businessProfile;
+    setBusinessDraft({
+      companyName: profile?.companyName || '',
+      role: profile?.role || 'owner',
+      teamMembers: profile?.teamMembers || [],
+    });
+  }, [user?.businessProfile]);
+
+  const isBusinessAccount = user?.accountType === 'business' || !!user?.businessProfile;
+
+  const persistBusinessProfile = async () => {
+    const companyName = businessDraft.companyName.trim() || `${user?.name || 'Business'} Holdings`;
+
+    try {
+      await updateBusinessProfile({
+        companyName,
+        role: businessDraft.role,
+        teamMembers: businessDraft.teamMembers.length > 0
+          ? businessDraft.teamMembers
+          : [
+              {
+                name: user?.name || 'Owner',
+                email: user?.email || '',
+                role: 'owner',
+                status: 'active',
+              },
+            ],
+      });
+      await refreshSession();
+      toast.success('Business profile updated');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to update business profile');
+    }
+  };
+
+  const addTeamMember = () => {
+    if (!newMember.name.trim() || !newMember.email.trim()) {
+      toast.error('Enter a name and email');
+      return;
+    }
+    setBusinessDraft((prev) => ({
+      ...prev,
+      teamMembers: [
+        ...prev.teamMembers,
+        {
+          name: newMember.name.trim(),
+          email: newMember.email.trim(),
+          role: newMember.role,
+          status: 'invited',
+        },
+      ],
+    }));
+    setNewMember({ name: '', email: '', role: 'viewer' });
+  };
 
   const handleShare = (platform: string) => {
     const url = window.location.href;
@@ -228,6 +298,117 @@ export default function Profile() {
                   </p>
                 </div>
               </div>
+            </div>
+          </div>
+
+          {/* Business Account Support */}
+          <div className="bg-card rounded-2xl p-5 shadow-soft animate-slide-up" style={{ animationDelay: '50ms' }}>
+            <div className="flex items-start justify-between gap-4 mb-4">
+              <div>
+                <h2 className="font-semibold text-foreground flex items-center gap-2">
+                  <Badge variant="secondary" className="rounded-full">Business</Badge>
+                  Business Account
+                </h2>
+                <p className="text-sm text-muted-foreground mt-1">
+                  {isBusinessAccount
+                    ? 'Manage your company profile, team access, and approval roles.'
+                    : 'Upgrade to a business account for team workflows and delegated approvals.'}
+                </p>
+              </div>
+              {!isBusinessAccount && (
+                <Button size="sm" variant="outline" onClick={persistBusinessProfile}>
+                  Convert
+                </Button>
+              )}
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <Label className="text-sm text-muted-foreground">Company name</Label>
+                <Input
+                  value={businessDraft.companyName}
+                  onChange={(e) => setBusinessDraft((prev) => ({ ...prev, companyName: e.target.value }))}
+                  placeholder="Enter your company name"
+                  className="mt-2"
+                />
+              </div>
+
+              <div>
+                <Label className="text-sm text-muted-foreground">Default role</Label>
+                <div className="grid grid-cols-3 gap-2 mt-2">
+                  {[
+                    { value: 'owner', label: 'Owner' },
+                    { value: 'finance_admin', label: 'Finance' },
+                    { value: 'operator', label: 'Operator' },
+                  ].map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => setBusinessDraft((prev) => ({ ...prev, role: option.value as typeof prev.role }))}
+                      className={`rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
+                        businessDraft.role === option.value
+                          ? 'border-primary bg-primary/5 text-primary'
+                          : 'border-border bg-muted/20 text-foreground hover:bg-muted/40'
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-border/70 bg-muted/20 p-4">
+                <div className="flex items-center justify-between gap-3 mb-3">
+                  <div>
+                    <h3 className="font-medium text-foreground">Team management</h3>
+                    <p className="text-xs text-muted-foreground">
+                      Invite teammates and assign approval permissions.
+                    </p>
+                  </div>
+                  <Badge variant="outline">{businessDraft.teamMembers.length} members</Badge>
+                </div>
+
+                <div className="space-y-2">
+                  {businessDraft.teamMembers.map((member, index) => (
+                    <div key={`${member.email}-${index}`} className="rounded-lg border border-border/60 bg-background px-3 py-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <div>
+                          <p className="text-sm font-medium text-foreground">{member.name}</p>
+                          <p className="text-xs text-muted-foreground">{member.email}</p>
+                        </div>
+                        <Badge variant={member.status === 'active' ? 'default' : 'secondary'}>
+                          {member.status}
+                        </Badge>
+                      </div>
+                      <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
+                        <span className="uppercase tracking-wide">{member.role}</span>
+                        <span>•</span>
+                        <span>{member.status === 'active' ? 'Can approve transfers' : 'Invite pending'}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1fr_auto]">
+                  <Input
+                    value={newMember.name}
+                    onChange={(e) => setNewMember((prev) => ({ ...prev, name: e.target.value }))}
+                    placeholder="Teammate name"
+                  />
+                  <Input
+                    value={newMember.email}
+                    onChange={(e) => setNewMember((prev) => ({ ...prev, email: e.target.value }))}
+                    placeholder="Teammate email"
+                  />
+                  <Button type="button" variant="outline" onClick={addTeamMember}>
+                    Invite
+                  </Button>
+                </div>
+              </div>
+
+              <Button className="w-full" onClick={persistBusinessProfile}>
+                Save Business Profile
+              </Button>
             </div>
           </div>
 
