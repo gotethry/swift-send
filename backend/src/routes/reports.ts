@@ -107,5 +107,34 @@ export default async function reportRoutes(fastify: FastifyInstance) {
       });
     },
   );
-}
 
+  /**
+   * Compliance violation report.
+   * GET /admin/reports/compliance/violations?fromDate&toDate&severity&source&userId&transferId
+   */
+  fastify.get(
+    '/admin/reports/compliance/violations',
+    adminGuards,
+    async (req) => {
+      const query = req.query as {
+        severity?: 'critical' | 'high' | 'medium' | 'low';
+        source?: 'contract_event' | 'compliance_log';
+        userId?: string;
+        transferId?: string;
+        fromDate?: string;
+        toDate?: string;
+        limit?: string;
+      };
+
+      return fastify.container.services.complianceViolations.generateReport({
+        severity: query.severity,
+        source: query.source,
+        userId: query.userId,
+        transferId: query.transferId,
+        fromDate: query.fromDate,
+        toDate: query.toDate,
+        limit: query.limit ? Number(query.limit) : 100,
+      });
+    },
+  );
+}

@@ -18,6 +18,16 @@ interface AdminComplianceLogsQuery {
   limit?: string;
 }
 
+interface AdminComplianceViolationsQuery {
+  severity?: "critical" | "high" | "medium" | "low";
+  source?: "contract_event" | "compliance_log";
+  userId?: string;
+  transferId?: string;
+  fromDate?: string;
+  toDate?: string;
+  limit?: string;
+}
+
 export default async function complianceRoutes(fastify: FastifyInstance) {
   const authGuards = { preHandler: [requireVerifiedSession] };
   const adminGuards = {
@@ -75,6 +85,23 @@ export default async function complianceRoutes(fastify: FastifyInstance) {
       return fastify.container.services.complianceLog.getFlaggedTransactions(
         limit,
       );
+    },
+  );
+
+  /** GET /admin/compliance/violations — compliance violation alert feed (admin) */
+  fastify.get<{ Querystring: AdminComplianceViolationsQuery }>(
+    "/admin/compliance/violations",
+    adminGuards,
+    async (req) => {
+      return fastify.container.services.complianceViolations.getViolations({
+        severity: req.query.severity,
+        source: req.query.source,
+        userId: req.query.userId,
+        transferId: req.query.transferId,
+        fromDate: req.query.fromDate,
+        toDate: req.query.toDate,
+        limit: req.query.limit ? Number(req.query.limit) : 100,
+      });
     },
   );
 

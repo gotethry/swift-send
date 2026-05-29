@@ -257,8 +257,6 @@ export class AuditStorageService {
   private getLatestRecord(): AuditRecord | undefined {
     const records = Array.from(this.store.values());
     if (records.length === 0) return undefined;
-    return records.reduce((latest, record) =>
-      new Date(record.storedAt).getTime() > new Date(latest.storedAt).getTime() ? record : latest,
-    );
+    return records[records.length - 1];
   }
 }
