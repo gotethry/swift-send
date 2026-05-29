@@ -8,6 +8,7 @@ import { ThemeToggle } from '@/components/ThemeToggle';
 import WalletConnectionDialog, { WalletStatusIndicator } from '@/components/WalletConnection';
 import { ComplianceDashboard } from '@/components/ComplianceDashboard';
 import { TrustedDeviceIndicator } from '@/components/TrustedDeviceIndicator';
+import { GuardianRecoveryWorkflow } from '@/components/GuardianRecoveryWorkflow';
 import { useAuth } from '@/contexts/AuthContext';
 import { useWallet } from '@/contexts/WalletContext';
 import { updateBusinessProfile } from '@/lib/auth';
@@ -494,6 +495,8 @@ export default function Profile() {
               </div>
             )}
           </div>
+
+          <GuardianRecoveryWorkflow />
 
           {/* Compliance Dashboard */}
           <div className="animate-slide-up" style={{ animationDelay: '90ms' }}>
