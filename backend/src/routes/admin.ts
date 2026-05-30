@@ -4,6 +4,7 @@ import { requireVerifiedSession } from '../middleware/authenticate';
 import { requireRole } from '../middleware/requireRole';
 import { getSession, saveSession } from '../auth/sessionStore';
 import type { JwtSessionPayload } from '../auth/sessionTypes';
+import { createAdminAuditHook } from '../middleware/adminAudit';
 
 interface SetGateBody {
   open: boolean;
@@ -104,7 +105,7 @@ export default async function adminRoutes(fastify: FastifyInstance) {
   /** POST /admin/rbac/gate — open or close the system-wide transfer gate */
   fastify.post<{ Body: SetGateBody }>(
     '/admin/rbac/gate',
-    adminGuards,
+    { preHandler: [requireVerifiedSession, requireRole('admin'), createAdminAuditHook('rbac.gate')] },
     async (req, reply) => {
       if (typeof req.body?.open !== 'boolean') {
         return reply.code(400).send({ error: '`open` (boolean) is required' });
@@ -118,7 +119,7 @@ export default async function adminRoutes(fastify: FastifyInstance) {
   /** POST /admin/rbac/allow — explicitly allow or block a user */
   fastify.post<{ Body: SetAllowBody }>(
     '/admin/rbac/allow',
-    adminGuards,
+    { preHandler: [requireVerifiedSession, requireRole('admin'), createAdminAuditHook('rbac.allow')] },
     async (req, reply) => {
       const { userId, allow } = req.body ?? {};
       if (!userId || typeof allow !== 'boolean') {
@@ -133,7 +134,7 @@ export default async function adminRoutes(fastify: FastifyInstance) {
   /** POST /admin/rbac/role — assign a role to a user */
   fastify.post<{ Body: SetRoleBody }>(
     '/admin/rbac/role',
-    adminGuards,
+    { preHandler: [requireVerifiedSession, requireRole('admin'), createAdminAuditHook('rbac.role')] },
     async (req, reply) => {
       const { userId, role } = req.body ?? {};
       if (!userId || !['admin', 'user'].includes(role)) {
@@ -181,7 +182,7 @@ export default async function adminRoutes(fastify: FastifyInstance) {
   /** POST /admin/dlq/retry — retry a single DLQ entry */
   fastify.post<{ Body: DlqRetryBody }>(
     '/admin/dlq/retry',
-    adminGuards,
+    { preHandler: [requireVerifiedSession, requireRole('admin'), createAdminAuditHook('dlq.retry')] },
     async (req, reply) => {
       const { jobId } = req.body ?? {};
       if (!jobId) {
@@ -191,7 +192,7 @@ export default async function adminRoutes(fastify: FastifyInstance) {
       const transfers = fastify.container.services.transfers;
       const entry = await fastify.container.services.deadLetterQueue.retryJob(
         jobId,
-        async (command) => transfers.createTransfer(command),
+        async (command) => { await transfers.createTransfer(command); },
       );
 
       if (!entry) {
@@ -203,10 +204,10 @@ export default async function adminRoutes(fastify: FastifyInstance) {
   );
 
   /** POST /admin/dlq/retry-all — retry all pending DLQ entries */
-  fastify.post('/admin/dlq/retry-all', adminGuards, async () => {
+  fastify.post('/admin/dlq/retry-all', { preHandler: [requireVerifiedSession, requireRole('admin'), createAdminAuditHook('dlq.retry_all')] }, async () => {
     const transfers = fastify.container.services.transfers;
     const result = await fastify.container.services.deadLetterQueue.retryAll(
-      async (command) => transfers.createTransfer(command),
+      async (command) => { await transfers.createTransfer(command); },
     );
     return result;
   });
@@ -214,7 +215,7 @@ export default async function adminRoutes(fastify: FastifyInstance) {
   /** POST /admin/dlq/:jobId/discard — discard a DLQ entry */
   fastify.post<{ Params: { jobId: string } }>(
     '/admin/dlq/:jobId/discard',
-    adminGuards,
+    { preHandler: [requireVerifiedSession, requireRole('admin'), createAdminAuditHook('dlq.discard')] },
     async (req, reply) => {
       const discarded = fastify.container.services.deadLetterQueue.discardEntry(req.params.jobId);
       if (!discarded) {
@@ -225,7 +226,7 @@ export default async function adminRoutes(fastify: FastifyInstance) {
   );
 
   /** POST /admin/dlq/purge — purge all discarded DLQ entries */
-  fastify.post('/admin/dlq/purge', adminGuards, async () => {
+  fastify.post('/admin/dlq/purge', { preHandler: [requireVerifiedSession, requireRole('admin'), createAdminAuditHook('dlq.purge')] }, async () => {
     const purged = fastify.container.services.deadLetterQueue.purgeDiscarded();
     return { purged };
   });
@@ -381,7 +382,7 @@ export default async function adminRoutes(fastify: FastifyInstance) {
   /** POST /admin/metrics/record — record an API latency sample */
   fastify.post<{ Body: { route: string; latencyMs: number; statusCode: number } }>(
     '/admin/metrics/record',
-    { preHandler: [requireVerifiedSession] },
+    adminGuards,
     async (req) => {
       const { route, latencyMs, statusCode } = req.body ?? {};
       if (!route || typeof latencyMs !== 'number' || typeof statusCode !== 'number') {
@@ -391,4 +392,24 @@ export default async function adminRoutes(fastify: FastifyInstance) {
       return { recorded: true };
     },
   );
+
+  /** Admin Audit Trail */
+
+  /** GET /admin/audit — list admin action audit logs */
+  fastify.get('/admin/audit', adminGuards, async (req) => {
+    const query = req.query as { adminId?: string; action?: string; limit?: string; offset?: string };
+    return fastify.container.services.adminAudit.getLogs({
+      adminId: query.adminId,
+      action: query.action,
+      limit: query.limit ? Number(query.limit) : 50,
+      offset: query.offset ? Number(query.offset) : 0,
+    });
+  });
+
+  /** GET /admin/audit/:id — single admin audit log entry */
+  fastify.get<{ Params: { id: string } }>('/admin/audit/:id', adminGuards, async (req, reply) => {
+    const entry = fastify.container.services.adminAudit.getLog(req.params.id);
+    if (!entry) return reply.code(404).send({ error: 'Audit log entry not found' });
+    return entry;
+  });
 }

@@ -1,22 +1,28 @@
 import type { FastifyInstance } from 'fastify';
 import { requireVerifiedSession } from '../middleware/authenticate';
 import { requireRole } from '../middleware/requireRole';
+import type { JwtSessionPayload } from '../auth/sessionTypes';
+import type { SecurityEventLevel } from '../modules/securityEvents/securityEventsService';
+
+const ALLOWED_LEVELS: SecurityEventLevel[] = ['INFO', 'WARNING', 'ERROR', 'CRITICAL'];
 
 export default async function securityEventsRoutes(fastify: FastifyInstance) {
-  // ingest events (from services) - authenticated
+  // ingest events (from services) - authenticated; userId is always the session subject
   fastify.post('/security/events', { preHandler: [requireVerifiedSession] }, async (req, reply) => {
     const body = req.body as any;
+    const payload = req.user as JwtSessionPayload;
     const svc = fastify.container.services.securityEvents;
+    const level: SecurityEventLevel = ALLOWED_LEVELS.includes(body.level) ? body.level : 'INFO';
     const event = svc.ingestEvent(
       body.type,
-      (body.level as any) || 'INFO',
+      level,
       body.action || 'ingest',
       body.details || {},
       {
-        userId: body.userId,
+        userId: payload.sub,
         ipAddress: req.ip,
         userAgent: req.headers['user-agent'] as string | undefined,
-        sessionId: (req.user as any)?.sub,
+        sessionId: payload.sub,
       },
     );
     return { ingested: true, id: event.id };
@@ -34,7 +40,7 @@ export default async function securityEventsRoutes(fastify: FastifyInstance) {
     return fastify.container.services.securityEvents.queryEvents(filter, limit);
   });
 
-  fastify.get('/admin/security/events/export', { preHandler: [requireVerifiedSession, requireRole('admin')] }, async (req) => {
+  fastify.get('/admin/security/events/export', { preHandler: [requireVerifiedSession, requireRole('admin')] }, async (req, reply) => {
     const q = req.query as { type?: string; userId?: string; startTime?: string; endTime?: string };
     const filter: any = {};
     if (q.type) filter.type = q.type;
@@ -45,6 +51,6 @@ export default async function securityEventsRoutes(fastify: FastifyInstance) {
     const header = 'id,timestamp,level,type,userId,ipAddress,userAgent,action,details';
     const rows = events.map((e: any) => [e.id, e.timestamp, e.level, e.type, e.userId || '', e.ipAddress || '', JSON.stringify(e.userAgent || ''), e.action, JSON.stringify(e.details || {})].join(','));
     const csv = [header, ...rows].join('\n');
-    return fastify.type('text/csv').send(csv);
+    return reply.type('text/csv').send(csv);
   });
 }

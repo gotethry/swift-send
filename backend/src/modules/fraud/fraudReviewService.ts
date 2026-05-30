@@ -40,7 +40,7 @@ export class FraudReviewService {
       userId: transfer.userId,
       amount: transfer.amount,
       currency: transfer.currency,
-      recipientName: transfer.recipient.metadata?.name || 'Recipient',
+      recipientName: (transfer.recipient.metadata?.name as string | undefined) || 'Recipient',
       fraudScore: transfer.fraud.score,
       fraudLevel: transfer.fraud.level,
       flags: transfer.fraud.flags,

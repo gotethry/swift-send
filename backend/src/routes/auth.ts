@@ -15,6 +15,7 @@ import {
 import { authenticate } from '../middleware/authenticate';
 import { deleteCachedKey, getCachedJson, setCachedJson } from '../utils/redisCache';
 import { verifyRateLimiter, resendRateLimiter } from '../auth/rateLimiter';
+import { generateFingerprint } from '../auth/deviceFingerprint';
 
 interface LoginBody {
   identifier: string;
@@ -99,11 +100,13 @@ export default async function authRoutes(fastify: FastifyInstance) {
       const session = createMariaSession();
       await setAuthCookie(reply, session);
 
+      const mariaFingerprint = generateFingerprint(request.headers, request.ip);
       fastify.container.services.authRiskEngine.recordAuthEvent({
         userId: session.id,
         type: 'login',
         ipAddress: request.ip,
         userAgent: request.headers['user-agent'],
+        fingerprint: mariaFingerprint,
         success: true,
         timestamp: new Date().toISOString(),
       });
@@ -120,16 +123,19 @@ export default async function authRoutes(fastify: FastifyInstance) {
     const session = createNewUserSession(isEmail ? identifier.toLowerCase() : undefined, isEmail ? undefined : identifier);
     await setAuthCookie(reply, session);
 
+    const fingerprint = generateFingerprint(request.headers, request.ip);
     const riskAssessment = fastify.container.services.authRiskEngine.assessRisk(
       session.id,
       request.ip,
       request.headers['user-agent'],
+      fingerprint,
     );
     fastify.container.services.authRiskEngine.recordAuthEvent({
       userId: session.id,
       type: 'login',
       ipAddress: request.ip,
       userAgent: request.headers['user-agent'],
+      fingerprint,
       success: true,
       timestamp: new Date().toISOString(),
     });
@@ -143,6 +149,7 @@ export default async function authRoutes(fastify: FastifyInstance) {
       riskAssessment: {
         level: riskAssessment.level,
         requiresStepUp: riskAssessment.requiresStepUp,
+        deviceUnknown: riskAssessment.factors.includes('Login from unrecognized device'),
         factors: riskAssessment.factors,
       },
     });
@@ -163,6 +170,7 @@ export default async function authRoutes(fastify: FastifyInstance) {
       type: 'login',
       ipAddress: request.ip,
       userAgent: request.headers['user-agent'],
+      fingerprint: generateFingerprint(request.headers, request.ip),
       success: true,
       timestamp: new Date().toISOString(),
     });
@@ -201,6 +209,7 @@ export default async function authRoutes(fastify: FastifyInstance) {
         type: 'verify_attempt',
         ipAddress: request.ip,
         userAgent: request.headers['user-agent'],
+        fingerprint: generateFingerprint(request.headers, request.ip),
         success: false,
         timestamp: new Date().toISOString(),
       });
@@ -220,6 +229,7 @@ export default async function authRoutes(fastify: FastifyInstance) {
       type: 'verify',
       ipAddress: request.ip,
       userAgent: request.headers['user-agent'],
+      fingerprint: generateFingerprint(request.headers, request.ip),
       success: true,
       timestamp: new Date().toISOString(),
     });

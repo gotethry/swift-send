@@ -51,11 +51,11 @@ interface EventBuffer {
 }
 
 class SecurityEventsService extends EventEmitter {
-  private logger: Logger;
+  private logger: ReturnType<typeof createLogger>;
   private eventBuffer: EventBuffer;
   private readonly BUFFER_SIZE = 100;
   private readonly BUFFER_FLUSH_INTERVAL_MS = 5000; // 5 seconds
-  private flushInterval: NodeJS.Timer | null = null;
+  private flushInterval: ReturnType<typeof setInterval> | null = null;
   private readonly CRITICAL_EVENTS_THRESHOLD = 5; // Per minute
   private criticalEventCounts: Map<string, number[]> = new Map();
   private readonly EVENT_RETENTION_MS = 60 * 60 * 1000; // 1 hour
@@ -218,7 +218,7 @@ class SecurityEventsService extends EventEmitter {
 
     try {
       const eventCount = this.eventBuffer.events.length;
-      this.logger.info('Flushing security events buffer', { eventCount });
+      this.logger.info({ eventCount }, 'Flushing security events buffer');
 
       // Emit flush event for external processing (e.g., database, logging service)
       this.emit('flush', {
@@ -229,9 +229,7 @@ class SecurityEventsService extends EventEmitter {
       this.eventBuffer.events = [];
       this.eventBuffer.timestamp = Date.now();
     } catch (error) {
-      this.logger.error('Error flushing security events buffer', {
-        error: error instanceof Error ? error.message : 'Unknown error',
-      });
+      this.logger.error({ error: error instanceof Error ? error.message : 'Unknown error' }, 'Error flushing security events buffer');
     }
   }
 
@@ -266,7 +264,7 @@ class SecurityEventsService extends EventEmitter {
    * Get service name from configuration
    */
   private getServiceName(): string {
-    return config.get('SERVICE_NAME') || 'unknown-service';
+    return process.env['SERVICE_NAME'] || 'unknown-service';
   }
 
   /**
@@ -302,10 +300,7 @@ class SecurityEventsService extends EventEmitter {
         const timeDiff = event.timestamp - userFailures[userFailures.length - 1].timestamp;
         if (timeDiff < 60000) {
           // 5 failures in 1 minute
-          this.logger.warn('Potential brute force attack detected', {
-            userId: event.userId,
-            failureCount: userFailures.length,
-          });
+          this.logger.warn({ userId: event.userId, failureCount: userFailures.length }, 'Potential brute force attack detected');
         }
       }
     }
@@ -328,10 +323,7 @@ class SecurityEventsService extends EventEmitter {
     recentEvents.push(now);
 
     if (recentEvents.length > this.CRITICAL_EVENTS_THRESHOLD) {
-      this.logger.error('Critical event threshold exceeded', {
-        eventType,
-        count: recentEvents.length,
-      });
+      this.logger.error({ eventType, count: recentEvents.length }, 'Critical event threshold exceeded');
     }
 
     this.criticalEventCounts.set(eventType, recentEvents);
@@ -398,16 +390,16 @@ class SecurityEventsService extends EventEmitter {
 
     switch (event.level) {
       case 'CRITICAL':
-        this.logger.error(`[CRITICAL] ${event.action}`, logData);
+        this.logger.error(logData, `[CRITICAL] ${event.action}`);
         break;
       case 'ERROR':
-        this.logger.error(event.action, logData);
+        this.logger.error(logData, event.action);
         break;
       case 'WARNING':
-        this.logger.warn(event.action, logData);
+        this.logger.warn(logData, event.action);
         break;
       case 'INFO':
-        this.logger.info(event.action, logData);
+        this.logger.info(logData, event.action);
         break;
     }
   }

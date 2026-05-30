@@ -27,6 +27,7 @@ import reportRoutes from "./routes/reports";
 import approvalRoutes from "./routes/approvals";
 import successRateRoutes from "./routes/successRate";
 import regionalFeeRoutes from "./routes/regionalFees";
+import webhookRoutes from "./routes/webhooks";
 import { config } from "./config";
 import { logger } from "./logger";
 import { createContainer } from "./container";
@@ -108,9 +109,9 @@ export async function buildApp() {
   await app.register(approvalRoutes, { prefix });
   await app.register(successRateRoutes, { prefix });
   await app.register(regionalFeeRoutes, { prefix });
+  await app.register(webhookRoutes, { prefix });
 
   app.addHook("onResponse", async (request, reply) => {
-    const start = request.elapsedTime ?? 0;
     const latencyMs = Math.round(reply.elapsedTime ?? 0);
     if (latencyMs > 0) {
       try {

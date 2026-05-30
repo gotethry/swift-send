@@ -93,8 +93,8 @@ export default async function transferRoutes(fastify: FastifyInstance) {
     return {
       ...computeFeeEstimate(amount, queueStats.queueLength),
       routing: selectOptimalRoute('cash_pickup', queueStats.queueLength, {
-        status: stellarState.status,
-        latencyMs: stellarState.latencyMs || 0,
+        status: stellarState.currentStatus,
+        latencyMs: stellarState.currentLatencyMs || 0,
       }),
     };
   });
@@ -120,8 +120,8 @@ export default async function transferRoutes(fastify: FastifyInstance) {
           compliance: simulation.compliance,
           multisig: simulation.multisig,
           routing: selectOptimalRoute(command.recipient.type, queueStats.queueLength, {
-            status: stellarState.status,
-            latencyMs: stellarState.latencyMs || 0,
+            status: stellarState.currentStatus,
+            latencyMs: stellarState.currentLatencyMs || 0,
           }),
         };
       } catch (err: unknown) {
@@ -160,8 +160,8 @@ export default async function transferRoutes(fastify: FastifyInstance) {
       const queueStats = fastify.container.services.transferQueue.getQueueStats();
       const stellarState = fastify.container.services.stellarMonitor.getState();
       const routing = selectOptimalRoute(command.recipient.type, queueStats.queueLength, {
-        status: stellarState.status,
-        latencyMs: stellarState.latencyMs || 0,
+        status: stellarState.currentStatus,
+        latencyMs: stellarState.currentLatencyMs || 0,
       });
 
       const jobId = fastify.container.services.transferQueue.enqueue(command);

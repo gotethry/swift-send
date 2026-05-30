@@ -25,7 +25,7 @@ export class WebhookDispatcher {
     this.eventBus.subscribe('notification.created', (e) => void this.handleEvent(e));
   }
 
-  private async handleEvent(event: DomainEvent) {
+  private async handleEvent(event: DomainEvent<unknown>) {
     const body = JSON.stringify(event.payload ?? {});
     const ts = Math.floor(Date.now() / 1000).toString();
 

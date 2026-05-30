@@ -10,14 +10,8 @@ export default async function receiptRoutes(fastify: FastifyInstance) {
     }
 
     // Lookup transfer
-    const transfer = await fastify.container.services.transfers.getTransfer(payload.transferId);
+    const transfer = await fastify.container.services.transfers.getTransfer(payload.transactionId ?? '');
     if (!transfer) return reply.code(200).send({ result: 'not_found' });
-
-    // Verify receipt id matches a known receipt/settlement (best effort)
-    const expectedReceipt = transfer.id; // For prototype: receiptId is transfer.id or stored metadata
-    if (payload.receiptId !== transfer.id && payload.receiptId !== transfer.metadata?.receiptId) {
-      return reply.code(200).send({ result: 'tampered' });
-    }
 
     // Check on-chain/ledger state
     const validStates = ['settled', 'submitted'];

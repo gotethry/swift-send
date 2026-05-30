@@ -2,13 +2,13 @@ import crypto from 'crypto';
 import { createLogger } from '../../logger';
 import { config, receiptConfig } from '../../config';
 
-interface ReceiptToken {
+export interface ReceiptToken {
   token: string;
   expiresAt: number;
   transactionId: string;
 }
 
-interface ReceiptVerification {
+export interface ReceiptVerification {
   valid: boolean;
   transactionId?: string;
   isExpired: boolean;
@@ -21,12 +21,12 @@ interface CacheEntry {
 }
 
 class ReceiptService {
-  private logger: Logger;
+  private logger: ReturnType<typeof createLogger>;
   private tokenCache: Map<string, CacheEntry>;
   private readonly HMAC_ALGORITHM = 'sha256';
   private readonly TOKEN_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours
   private readonly MAX_CACHE_SIZE = 10000;
-  private cacheCleanupInterval: NodeJS.Timer | null = null;
+  private cacheCleanupInterval: ReturnType<typeof setInterval> | null = null;
 
   constructor() {
     this.logger = createLogger({ component: 'receiptService' });
@@ -41,9 +41,7 @@ class ReceiptService {
    */
   public generateReceiptToken(transactionId: string): ReceiptToken {
     if (!transactionId || typeof transactionId !== 'string') {
-      this.logger.warn('Invalid transactionId provided for token generation', {
-        transactionId: typeof transactionId,
-      });
+      this.logger.warn({ transactionId: typeof transactionId }, 'Invalid transactionId provided for token generation');
       throw new Error('Valid transactionId is required');
     }
 
@@ -62,10 +60,7 @@ class ReceiptService {
     // Cache the token for quick verification
     this.cacheToken(token, transactionId, expiresAt, signature);
 
-    this.logger.debug('Receipt token generated', {
-      transactionId,
-      expiresAt: new Date(expiresAt).toISOString(),
-    });
+    this.logger.debug({ transactionId, expiresAt: new Date(expiresAt).toISOString() }, 'Receipt token generated');
 
     return {
       token,
@@ -81,9 +76,7 @@ class ReceiptService {
    */
   public verifyReceiptToken(token: string): ReceiptVerification {
     if (!token || typeof token !== 'string') {
-      this.logger.warn('Invalid token provided for verification', {
-        tokenType: typeof token,
-      });
+      this.logger.warn({ tokenType: typeof token }, 'Invalid token provided for verification');
       return {
         valid: false,
         isExpired: false,
@@ -109,7 +102,7 @@ class ReceiptService {
       // Parse token
       const parts = token.split('.');
       if (parts.length !== 2) {
-        this.logger.warn('Malformed token format', { tokenLength: parts.length });
+        this.logger.warn({ tokenLength: parts.length }, 'Malformed token format');
         return {
           valid: false,
           isExpired: false,
@@ -139,10 +132,7 @@ class ReceiptService {
       // Check expiration
       const isExpired = Date.now() > expiresAt;
       if (isExpired) {
-        this.logger.debug('Token has expired', {
-          transactionId,
-          expiresAt: new Date(expiresAt).toISOString(),
-        });
+        this.logger.debug({ transactionId, expiresAt: new Date(expiresAt).toISOString() }, 'Token has expired');
         return {
           valid: false,
           transactionId,
@@ -164,9 +154,7 @@ class ReceiptService {
       );
 
       if (!signatureMatch) {
-        this.logger.warn('Token signature verification failed', {
-          transactionId,
-        });
+        this.logger.warn({ transactionId }, 'Token signature verification failed');
         return {
           valid: false,
           isExpired: false,
@@ -182,9 +170,7 @@ class ReceiptService {
         isExpired: false,
       };
     } catch (error) {
-      this.logger.error('Error verifying receipt token', {
-        error: error instanceof Error ? error.message : 'Unknown error',
-      });
+      this.logger.error({ error: error instanceof Error ? error.message : 'Unknown error' }, 'Error verifying receipt token');
       return {
         valid: false,
         isExpired: false,
@@ -209,7 +195,7 @@ class ReceiptService {
   public clearCache(): void {
     const cacheSize = this.tokenCache.size;
     this.tokenCache.clear();
-    this.logger.info('Receipt token cache cleared', { clearedTokens: cacheSize });
+    this.logger.info({ clearedTokens: cacheSize }, 'Receipt token cache cleared');
   }
 
   /**
@@ -292,10 +278,7 @@ class ReceiptService {
     }
 
     if (removed > 0) {
-      this.logger.debug('Expired tokens cleaned from cache', {
-        removedCount: removed,
-        remainingCount: this.tokenCache.size,
-      });
+      this.logger.debug({ removedCount: removed, remainingCount: this.tokenCache.size }, 'Expired tokens cleaned from cache');
     }
   }
 
@@ -315,3 +298,8 @@ class ReceiptService {
 // Export singleton instance
 export const receiptService = new ReceiptService();
 export default ReceiptService;
+
+// Standalone helper used by receipt routes
+export function verifyReceiptToken(token: string): ReceiptVerification {
+  return receiptService.verifyReceiptToken(token);
+}
