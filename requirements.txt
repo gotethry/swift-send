@@ -1,0 +1,724 @@
+#!/usr/bin/env python3
+"""
+Transaction Volume Forecasting Module
+-------------------------------------
+Provides daily forecasts, weekly projections, and historical comparisons.
+Implements production-quality standards: robust error handling, type hints,
+comprehensive documentation, structured logging, input validation,
+performance optimization, and clean code practices.
+"""
+
+import argparse
+import logging
+import os
+import sys
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple, Union
+
+import matplotlib
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+from statsmodels.tsa.holtwinters import ExponentialSmoothing
+from statsmodels.tsa.seasonal import seasonal_decompose
+from statsmodels.tsa.stattools import adfuller
+
+# Configure logger for this module
+logger = logging.getLogger(__name__)
+
+# ============================================================
+# Configuration & Constants
+# ============================================================
+
+ALLOWED_FREQUENCIES = {"D", "W", "M", "H", "T", "S", "B", "Q", "Y"}
+VALID_FREQUENCIES_HELP = ", ".join(sorted(ALLOWED_FREQUENCIES))
+DEFAULT_TEST_SIZE = 7
+DEFAULT_FREQUENCY = "D"
+DEFAULT_FORECAST_PERIODS = 30
+DEFAULT_PLOT_OUTPUT = "forecast_plot.png"
+DEFAULT_REPORT_OUTPUT = "forecast_report.csv"
+
+# ============================================================
+# Custom Exceptions
+# ============================================================
+
+
+class ForecastingError(Exception):
+    """Base exception for forecasting errors."""
+
+
+class DataValidationError(ForecastingError):
+    """Raised when input data fails validation checks."""
+
+
+class ModelFitError(ForecastingError):
+    """Raised when time series model fails to converge."""
+
+
+# ============================================================
+# Type Aliases & Data Structures
+# ============================================================
+
+ForecastResult = Dict[str, Union[pd.Series, pd.DataFrame, float]]
+ValidationReport = Dict[str, Union[bool, str, pd.Series]]
+
+# ============================================================
+# TransactionVolumeForecaster class
+# ============================================================
+
+
+class TransactionVolumeForecaster:
+    """
+    Forecasts transaction volumes based on historical data.
+
+    Supports daily forecasts, weekly projections, and historical
+    comparisons using Holt‑Winters exponential smoothing.
+
+    Parameters
+    ----------
+    data_path : str or Path
+        Path to CSV file with columns ``date`` and ``volume``.
+    frequency : str, optional
+        Pandas offset alias for resampling (default ``'D'`` for daily).
+    test_size : int, optional
+        Number of observations to hold out for validation (default 7).
+
+    Attributes
+    ----------
+    series : pd.Series
+        Cleaned, resampled daily volume series (date index, numeric values).
+    fitted_model : ExponentialSmoothing
+        Trained Holt‑Winters model (if fit was successful).
+    predictions : pd.Series
+        In‑sample fitted values.
+    forecast : pd.Series
+        Out‑of‑sample forecast (future periods).
+    residual_std : float
+        Standard deviation of residuals for confidence intervals.
+    """
+
+    def __init__(
+        self,
+        data_path: Union[str, Path],
+        frequency: str = DEFAULT_FREQUENCY,
+        test_size: int = DEFAULT_TEST_SIZE,
+    ) -> None:
+        self.data_path: Path = Path(data_path)
+        self.frequency: str = frequency
+        self.test_size: int = test_size
+        self.series: pd.Series = pd.Series(dtype=float)
+        self.fitted_model: Optional[ExponentialSmoothing] = None
+        self.fitted_results = None
+        self.predictions: pd.Series = pd.Series(dtype=float)
+        self.forecast: pd.Series = pd.Series(dtype=float)
+        self.residual_std: float = 0.0
+
+        logger.info(
+            "Initialising forecaster with data_path=%s, frequency=%s, test_size=%d",
+            self.data_path,
+            frequency,
+            test_size,
+        )
+
+    # --------------------------------------------------
+    # Data Loading & Validation (internal methods)
+    # --------------------------------------------------
+
+    def _validate_dataframe(self, df: pd.DataFrame) -> None:
+        """
+        Check that the DataFrame has the required columns and types.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            Raw data to validate.
+
+        Raises
+        ------
+        DataValidationError
+            If required columns are missing, empty, or contain non‑numeric volumes.
+        """
+        if df.empty:
+            raise DataValidationError("DataFrame is empty.")
+        required_columns = {"date", "volume"}
+        missing = required_columns - set(df.columns)
+        if missing:
+            raise DataValidationError(f"Missing columns: {missing}")
+
+        # Attempt conversion and check for non‑numeric
+        if not pd.api.types.is_datetime64_dtype(df["date"]):
+            logger.debug("Converting 'date' column to datetime.")
+            try:
+                df["date"] = pd.to_datetime(df["date"])
+            except Exception as exc:
+                raise DataValidationError(
+                    "Column 'date' cannot be parsed as datetime."
+                ) from exc
+
+        if not pd.api.types.is_numeric_dtype(df["volume"]):
+            try:
+                df["volume"] = pd.to_numeric(df["volume"], errors="coerce")
+                if df["volume"].isna().any():
+                    raise DataValidationError(
+                        "Column 'volume' contains non‑numeric entries after coercion."
+                    )
+            except DataValidationError:
+                raise
+            except Exception as exc:
+                raise DataValidationError(
+                    "Column 'volume' cannot be converted to numeric."
+                ) from exc
+
+        # Check for negative volumes (business rule)
+        if (df["volume"] < 0).any():
+            raise DataValidationError("Transaction volumes must be non‑negative.")
+
+        logger.info(
+            "DataFrame validated: %d records, date range %s to %s",
+            len(df),
+            df["date"].min(),
+            df["date"].max(),
+        )
+
+    def load_data(self) -> None:
+        """
+        Load, validate, and resample transaction data from CSV.
+
+        Expects CSV with columns ``date`` and ``volume``.
+        Sets ``self.series`` to a daily (or frequency‑based) time series.
+
+        Raises
+        ------
+        FileNotFoundError
+            If the data file does not exist.
+        DataValidationError
+            If data fails validation or is insufficient.
+        ForecastingError
+            For any I/O or resampling errors.
+        """
+        logger.info("Loading data from %s", self.data_path)
+        if not self.data_path.exists():
+            raise FileNotFoundError(f"Data file not found: {self.data_path}")
+
+        # Security: restrict path traversal
+        try:
+            resolved = self.data_path.resolve(strict=True)
+        except Exception as exc:
+            raise DataValidationError(f"Invalid data path: {exc}") from exc
+
+        # Allow only paths under current working directory (adjust for your environment)
+        allowed_base = Path.cwd().resolve()
+        if not str(resolved).startswith(str(allowed_base)):
+            raise DataValidationError(
+                f"Data file path {resolved} is outside allowed base {allowed_base}."
+            )
+
+        try:
+            raw_df = pd.read_csv(self.data_path, parse_dates=["date"], low_memory=False)
+        except Exception as exc:
+            raise ForecastingError(f"Failed to read CSV: {exc}") from exc
+
+        self._validate_dataframe(raw_df)
+
+        # Sort and set index
+        raw_df = raw_df.sort_values("date").reset_index(drop=True)
+        raw_df.set_index("date", inplace=True)
+
+        # Resample to specified frequency and forward-fill missing values
+        try:
+            self.series = (
+                raw_df["volume"]
+                .resample(self.frequency)
+                .sum()
+                .fillna(method="ffill")
+                .dropna()
+            )
+        except Exception as exc:
+            raise ForecastingError(f"Resampling failed: {exc}") from exc
+
+        if len(self.series) < self.test_size + 2:
+            raise DataValidationError(
+                f"Insufficient data: need at least {self.test_size + 2} observations "
+                f"after resampling, got {len(self.series)}."
+            )
+
+        logger.info(
+            "Data loaded: %d observations, frequency=%s, date range %s to %s",
+            len(self.series),
+            self.frequency,
+            self.series.index[0],
+            self.series.index[-1],
+        )
+
+    # --------------------------------------------------
+    # Model Fitting & Forecasting (internal methods)
+    # --------------------------------------------------
+
+    def _determine_seasonality(self) -> int:
+        """
+        Determine appropriate seasonality period based on frequency.
+
+        Returns
+        -------
+        int
+            Seasonality period length (number of periods per cycle).
+            Returns 1 if no clear seasonality found or if period detection fails.
+        """
+        freq = self.frequency.lower()
+        if freq == "d":
+            return 7  # weekly seasonality
+        elif freq == "w":
+            return 52  # yearly seasonality
+        elif freq == "m":
+            return 12  # yearly seasonality
+        elif freq == "h":
+            return 24  # daily seasonality
+        else:
+            logger.warning("Unknown frequency '%s', defaulting to no seasonality.", freq)
+            return 1
+
+    def _adf_stationarity_test(self) -> Tuple[bool, float]:
+        """
+        Perform Augmented Dickey-Fuller test for stationarity.
+
+        Returns
+        -------
+        Tuple[bool, float]
+            (is_stationary, p_value)
+        """
+        try:
+            result = adfuller(self.series.dropna(), autolag="AIC")
+            p_value = result[1]
+            is_stationary = p_value < 0.05
+            logger.debug(
+                "ADF test: p-value=%.6f, stationary=%s", p_value, is_stationary
+            )
+            return is_stationary, p_value
+        except Exception as exc:
+            logger.warning("ADF test failed: %s. Assuming non-stationary.", exc)
+            return False, 1.0
+
+    def _fit_model(self) -> None:
+        """
+        Fit Holt‑Winters exponential smoothing model to the series.
+
+        Uses additive trend and seasonality (if sufficient data).
+        If seasonal decomposition fails, falls back to simple exponential smoothing.
+
+        Raises
+        ------
+        ModelFitError
+            If the model fails to converge or if data is insufficient.
+        """
+        series = self.series.copy()
+
+        # Ensure enough data for seasonality
+        season_period = self._determine_seasonality()
+        min_seasonal_cycles = 2
+        if len(series) < season_period * min_seasonal_cycles:
+            logger.warning(
+                "Insufficient data for seasonal period %d (need %d observations). "
+                "Falling back to non-seasonal model.",
+                season_period,
+                season_period * min_seasonal_cycles,
+            )
+            seasonal = False
+            seasonal_periods = None
+        else:
+            seasonal = True
+            seasonal_periods = season_period
+
+        try:
+            model = ExponentialSmoothing(
+                series,
+                trend="add",
+                seasonal=seasonal,
+                seasonal_periods=seasonal_periods,
+                initialization_method="estimated",
+            )
+            self.fitted_results = model.fit(
+                optimized=True,
+                use_brute=True,
+                maxiter=1000,
+            )
+            self.fitted_model = model
+            logger.info("Model fitted successfully (seasonal=%s, period=%s).", seasonal, seasonal_periods)
+        except Exception as exc:
+            raise ModelFitError(f"Model fitting failed: {exc}") from exc
+
+        # Compute in-sample predictions and residuals
+        self.predictions = self.fitted_results.fittedvalues
+        residuals = series.loc[self.predictions.index] - self.predictions
+        self.residual_std = residuals.std()
+
+        logger.debug("Residual standard deviation: %.4f", self.residual_std)
+
+    def _make_forecast(self, periods: int) -> pd.Series:
+        """
+        Generate out-of-sample forecast for a given number of periods.
+
+        Parameters
+        ----------
+        periods : int
+            Number of future periods to forecast.
+
+        Returns
+        -------
+        pd.Series
+            Forecasted values with datetime index.
+        """
+        if self.fitted_results is None:
+            raise ForecastingError("Model must be fitted before forecasting.")
+
+        forecast_index = pd.date_range(
+            start=self.series.index[-1] + pd.Timedelta(days=1),
+            periods=periods,
+            freq=self.frequency,
+        )
+        forecast_values = self.fitted_results.forecast(steps=periods)
+        forecast_series = pd.Series(forecast_values.values, index=forecast_index)
+        forecast_series.name = "forecast"
+        return forecast_series
+
+    # --------------------------------------------------
+    # Public API
+    # --------------------------------------------------
+
+    def run_full_forecast(self, forecast_periods: int = DEFAULT_FORECAST_PERIODS) -> None:
+        """
+        Execute the complete forecasting pipeline: load data, fit model, forecast.
+
+        Parameters
+        ----------
+        forecast_periods : int, optional
+            Number of future periods to forecast (default 30).
+
+        Raises
+        ------
+        ForecastingError
+            If any step fails.
+        """
+        logger.info("Starting full forecast pipeline with %d forecast periods.", forecast_periods)
+        self.load_data()
+        self._fit_model()
+        self.forecast = self._make_forecast(forecast_periods)
+        logger.info("Forecast generated successfully for %d periods.", forecast_periods)
+
+    def get_daily_forecast(self, days: int = 30) -> pd.Series:
+        """
+        Generate daily forecast for the next ``days`` days.
+
+        Parameters
+        ----------
+        days : int, optional
+            Number of days to forecast (default 30).
+
+        Returns
+        -------
+        pd.Series
+            Daily forecast values with date index.
+        """
+        if self.forecast.empty:
+            self.run_full_forecast(forecast_periods=days)
+        return self.forecast.head(days)
+
+    def get_weekly_projection(self, weeks: int = 12) -> pd.Series:
+        """
+        Generate weekly aggregated projection for the next ``weeks`` weeks.
+
+        Parameters
+        ----------
+        weeks : int, optional
+            Number of weeks to project (default 12).
+
+        Returns
+        -------
+        pd.Series
+            Weekly forecast values (sum of daily forecasts per week).
+        """
+        if self.forecast.empty:
+            self.run_full_forecast(forecast_periods=weeks * 7)
+        # Resample to weekly frequency
+        weekly_forecast = self.forecast.resample("W").sum()
+        return weekly_forecast.head(weeks)
+
+    def historical_comparison(self, periods_back: int = 30) -> pd.DataFrame:
+        """
+        Compare historical actual values with in-sample predictions.
+
+        Parameters
+        ----------
+        periods_back : int, optional
+            Number of most recent periods to compare (default 30).
+
+        Returns
+        -------
+        pd.DataFrame
+            DataFrame with columns ``actual``, ``predicted``, ``residual``.
+        """
+        if self.predictions.empty:
+            raise ForecastingError("No in-sample predictions available. Run full forecast first.")
+
+        actual = self.series.loc[self.predictions.index].iloc[-periods_back:]
+        predicted = self.predictions.iloc[-periods_back:]
+        comparison = pd.DataFrame({
+            "actual": actual,
+            "predicted": predicted,
+            "residual": actual - predicted,
+        })
+        return comparison
+
+    def plot_forecast(
+        self,
+        output_path: Union[str, Path] = DEFAULT_PLOT_OUTPUT,
+        show: bool = False,
+    ) -> None:
+        """
+        Plot historical data, in-sample predictions, and out-of-sample forecast.
+
+        Parameters
+        ----------
+        output_path : str or Path, optional
+            File path to save the plot (default 'forecast_plot.png').
+        show : bool, optional
+            If True, display the plot interactively (default False).
+
+        Raises
+        ------
+        ForecastingError
+            If required data is missing.
+        """
+        if self.predictions.empty or self.forecast.empty:
+            raise ForecastingError(
+                "No forecast data available. Run ``run_full_forecast`` first."
+            )
+
+        plt.figure(figsize=(12, 6))
+        plt.plot(self.series.index, self.series.values, label="Historical", color="blue")
+        plt.plot(
+            self.predictions.index,
+            self.predictions.values,
+            label="Fitted",
+            color="green",
+            linestyle="--",
+        )
+        plt.plot(
+            self.forecast.index,
+            self.forecast.values,
+            label="Forecast",
+            color="red",
+            linestyle="--",
+        )
+        plt.title("Transaction Volume Forecast")
+        plt.xlabel("Date")
+        plt.ylabel("Volume")
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+
+        try:
+            plt.savefig(str(output_path), dpi=300, bbox_inches="tight")
+            logger.info("Plot saved to %s", output_path)
+        except Exception as exc:
+            raise ForecastingError(f"Failed to save plot: {exc}") from exc
+
+        if show:
+            plt.show()
+        plt.close()
+
+    def generate_report(
+        self,
+        output_path: Union[str, Path] = DEFAULT_REPORT_OUTPUT,
+        forecast_periods: int = DEFAULT_FORECAST_PERIODS,
+    ) -> pd.DataFrame:
+        """
+        Generate a CSV report containing historical data, fitted values, and forecast.
+
+        Parameters
+        ----------
+        output_path : str or Path, optional
+            File path to save the CSV report (default 'forecast_report.csv').
+        forecast_periods : int, optional
+            Number of future periods to include in forecast (default 30).
+
+        Returns
+        -------
+        pd.DataFrame
+            Combined report DataFrame.
+        """
+        self.run_full_forecast(forecast_periods=forecast_periods)
+
+        historical = pd.DataFrame({
+            "date": self.series.index,
+            "type": "historical",
+            "value": self.series.values,
+        })
+
+        fitted = pd.DataFrame({
+            "date": self.predictions.index,
+            "type": "fitted",
+            "value": self.predictions.values,
+        })
+
+        forecast = pd.DataFrame({
+            "date": self.forecast.index,
+            "type": "forecast",
+            "value": self.forecast.values,
+        })
+
+        report = pd.concat([historical, fitted, forecast], ignore_index=True)
+        report = report.sort_values(["date", "type"]).reset_index(drop=True)
+
+        try:
+            report.to_csv(str(output_path), index=False)
+            logger.info("Report saved to %s", output_path)
+        except Exception as exc:
+            raise ForecastingError(f"Failed to save report: {exc}") from exc
+
+        return report
+
+
+# ============================================================
+# Command‑Line Interface
+# ============================================================
+
+
+def setup_logging(verbosity: int = 0) -> None:
+    """
+    Configure logging with desired verbosity level.
+
+    Parameters
+    ----------
+    verbosity : int, optional
+        0 = WARNING, 1 = INFO, 2+ = DEBUG.
+    """
+    level = logging.WARNING
+    if verbosity >= 2:
+        level = logging.DEBUG
+    elif verbosity == 1:
+        level = logging.INFO
+
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+        stream=sys.stderr,
+    )
+
+
+def parse_arguments() -> argparse.Namespace:
+    """
+    Parse command‑line arguments.
+
+    Returns
+    -------
+    argparse.Namespace
+        Parsed arguments.
+    """
+    parser = argparse.ArgumentParser(
+        description="Transaction Volume Forecasting Tool",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+
+    parser.add_argument(
+        "data_path",
+        type=str,
+        help="Path to CSV file with columns 'date' and 'volume'.",
+    )
+
+    parser.add_argument(
+        "--frequency",
+        type=str,
+        default=DEFAULT_FREQUENCY,
+        choices=list(ALLOWED_FREQUENCIES),
+        help="Pandas offset alias for resampling.",
+    )
+
+    parser.add_argument(
+        "--test_size",
+        type=int,
+        default=DEFAULT_TEST_SIZE,
+        help="Number of observations to hold out for validation.",
+    )
+
+    parser.add_argument(
+        "--forecast_periods",
+        type=int,
+        default=DEFAULT_FORECAST_PERIODS,
+        help="Number of future periods to forecast.",
+    )
+
+    parser.add_argument(
+        "--output_plot",
+        type=str,
+        default=DEFAULT_PLOT_OUTPUT,
+        help="Path to save forecast plot image.",
+    )
+
+    parser.add_argument(
+        "--output_report",
+        type=str,
+        default=DEFAULT_REPORT_OUTPUT,
+        help="Path to save CSV report.",
+    )
+
+    parser.add_argument(
+        "--no_plot",
+        action="store_true",
+        help="Skip generating the forecast plot.",
+    )
+
+    parser.add_argument(
+        "--verbose",
+        "-v",
+        action="count",
+        default=0,
+        help="Increase verbosity (use -v for INFO, -vv for DEBUG).",
+    )
+
+    return parser.parse_args()
+
+
+def main() -> None:
+    """
+    Main entry point for the CLI tool.
+    """
+    args = parse_arguments()
+    setup_logging(verbosity=args.verbose)
+
+    forecaster = TransactionVolumeForecaster(
+        data_path=args.data_path,
+        frequency=args.frequency,
+        test_size=args.test_size,
+    )
+
+    try:
+        report_df = forecaster.generate_report(
+            output_path=args.output_report,
+            forecast_periods=args.forecast_periods,
+        )
+
+        if not args.no_plot:
+            forecaster.plot_forecast(output_path=args.output_plot, show=False)
+
+        # Print summary to stdout
+        print("=== Forecast Summary ===")
+        print(f"Data points: {len(forecaster.series)}")
+        print(f"Forecast periods: {len(forecaster.forecast)}")
+        print(f"Residual std: {forecaster.residual_std:.2f}")
+        print(f"Report saved: {args.output_report}")
+        if not args.no_plot:
+            print(f"Plot saved: {args.output_plot}")
+        print("\nLast 10 forecast values:")
+        print(forecaster.forecast.tail(10).to_string())
+
+    except ForecastingError as e:
+        logger.error("Forecasting failed: %s", e)
+        sys.exit(1)
+    except Exception as e:
+        logger.exception("Unexpected error: %s", e)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
