@@ -28,6 +28,10 @@ import approvalRoutes from "./routes/approvals";
 import successRateRoutes from "./routes/successRate";
 import regionalFeeRoutes from "./routes/regionalFees";
 import webhookRoutes from "./routes/webhooks";
+import traceRoutes from "./routes/traces";
+import verificationRoutes from "./routes/verification";
+import analyticsRoutes from "./routes/analytics";
+import thresholdRoutes from "./routes/thresholds";
 import { config } from "./config";
 import { logger } from "./logger";
 import { createContainer } from "./container";
@@ -109,7 +113,10 @@ export async function buildApp() {
   await app.register(approvalRoutes, { prefix });
   await app.register(successRateRoutes, { prefix });
   await app.register(regionalFeeRoutes, { prefix });
-  await app.register(webhookRoutes, { prefix });
+  await app.register(traceRoutes, { prefix });
+  await app.register(verificationRoutes, { prefix });
+  await app.register(analyticsRoutes, { prefix });
+  await app.register(thresholdRoutes, { prefix });
 
   app.addHook("onResponse", async (request, reply) => {
     const latencyMs = Math.round(reply.elapsedTime ?? 0);

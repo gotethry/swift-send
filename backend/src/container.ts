@@ -41,6 +41,10 @@ import { receiptService } from "./modules/receipts/receiptService";
 import { WebhookDispatcher } from "./modules/webhooks/webhookDispatcher";
 import { WebhookService } from "./modules/webhooks/webhookService";
 import { AdminAuditService } from "./modules/admin/adminAuditService";
+import { RequestTraceService } from "./modules/traces/requestTraceService";
+import { VerificationService } from "./modules/verification/verificationService";
+import { CashFlowAnalyticsService } from "./modules/analytics/cashFlowAnalyticsService";
+import { ApprovalThresholdService } from "./modules/approvals/approvalThresholdService";
 
 export interface AppContainer {
   config: AppConfig;
@@ -83,6 +87,10 @@ export interface AppContainer {
     stressTest: StressTestService;
     webhooks: WebhookService;
     adminAudit: AdminAuditService;
+    requestTrace: RequestTraceService;
+    verification: VerificationService;
+    cashFlowAnalytics: CashFlowAnalyticsService;
+    approvalThreshold: ApprovalThresholdService;
   };
 }
 
@@ -150,6 +158,10 @@ export function createContainer(): AppContainer {
   const webhookDispatcher = new WebhookDispatcher(eventBus);
   const webhooks = new WebhookService(eventBus);
   const adminAudit = new AdminAuditService();
+  const requestTrace = new RequestTraceService();
+  const verification = new VerificationService();
+  const cashFlowAnalytics = new CashFlowAnalyticsService();
+  const approvalThreshold = new ApprovalThresholdService();
 
   recurringWorker.start();
   stellarMonitor.start();
@@ -222,6 +234,10 @@ export function createContainer(): AppContainer {
       stressTest,
       webhooks,
       adminAudit,
+      requestTrace,
+      verification,
+      cashFlowAnalytics,
+      approvalThreshold,
     },
   };
 }

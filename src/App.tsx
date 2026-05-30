@@ -38,6 +38,10 @@ const AdminRegulatoryReports = lazy(() => import("./pages/AdminRegulatoryReports
 const AdminApiUsage = lazy(() => import("./pages/AdminApiUsage"));
 const ActivityHeatmap = lazy(() => import("./pages/ActivityHeatmap"));
 const InsightsDashboard = lazy(() => import("./pages/InsightsDashboard"));
+const AdminApiTraces = lazy(() => import("./pages/AdminApiTraces"));
+const RecipientVerification = lazy(() => import("./pages/RecipientVerification"));
+const CashFlowAnalytics = lazy(() => import("./pages/CashFlowAnalytics"));
+const AdminThresholdRules = lazy(() => import("./pages/AdminThresholdRules"));
 const VerificationFlow = lazy(() =>
   import("./components/VerificationFlow").then((module) => ({
     default: module.VerificationFlow,
@@ -265,6 +269,38 @@ function AppRoutes() {
           element={
             <ProtectedRoute>
               <AdminRegulatoryReports />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/traces"
+          element={
+            <ProtectedRoute>
+              <AdminApiTraces />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/verifications"
+          element={
+            <ProtectedRoute>
+              <RecipientVerification />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/thresholds"
+          element={
+            <ProtectedRoute>
+              <AdminThresholdRules />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/analytics/cash-flow"
+          element={
+            <ProtectedRoute>
+              <CashFlowAnalytics />
             </ProtectedRoute>
           }
         />
