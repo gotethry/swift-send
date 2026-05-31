@@ -94,6 +94,13 @@ const adminCards = [
     href: "/admin/thresholds",
     color: "text-amber-500",
   },
+  {
+    title: "Operations Workspace",
+    description: "Review AML cases, escrow expiry, country risk, and notification routing",
+    icon: FileText,
+    href: "/admin/operations",
+    color: "text-slate-600",
+  },
 ];
 
 export default function AdminDashboard() {

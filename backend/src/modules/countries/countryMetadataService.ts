@@ -18,6 +18,8 @@ export interface CountryInfo {
   isRestricted: boolean;
   complianceRules: string[];
   cashOutMethods: CashOutMethod[];
+  riskScore: number;
+  riskLevel: 'low' | 'medium' | 'high';
 }
 
 interface RateCacheEntry {
@@ -33,6 +35,7 @@ interface StaticCountryData {
   cashOutMethods: CashOutMethod[];
   complianceRules: string[];
   defaultRate: number;  // seed rate used until a live rate is fetched
+  baselineRisk: number;
 }
 
 const COUNTRY_REGISTRY: Record<string, StaticCountryData> = {
@@ -64,6 +67,7 @@ const COUNTRY_REGISTRY: Record<string, StaticCountryData> = {
       'Government ID required for cash pickup',
       'Transfers above $500 USD require additional verification',
     ],
+    baselineRisk: 25,
   },
   PH: {
     countryName: 'Philippines',
@@ -93,6 +97,7 @@ const COUNTRY_REGISTRY: Record<string, StaticCountryData> = {
       'Valid government-issued ID required',
       'Recipient must have a registered mobile number',
     ],
+    baselineRisk: 22,
   },
   GT: {
     countryName: 'Guatemala',
@@ -115,6 +120,7 @@ const COUNTRY_REGISTRY: Record<string, StaticCountryData> = {
     complianceRules: [
       'DPI (national ID) required for cash pickup',
     ],
+    baselineRisk: 18,
   },
   SV: {
     countryName: 'El Salvador',
@@ -143,6 +149,7 @@ const COUNTRY_REGISTRY: Record<string, StaticCountryData> = {
     complianceRules: [
       'DUI (national ID) required for cash pickup',
     ],
+    baselineRisk: 15,
   },
 };
 
@@ -174,6 +181,7 @@ export class CountryMetadataService {
    */
   async getCountryInfo(code: string): Promise<CountryInfo> {
     const upper = code.toUpperCase();
+    const riskProfile = this.getRiskProfile(upper);
 
     // Restricted corridor — return minimal info without cash-out methods
     if (RESTRICTED_COUNTRIES.has(upper)) {
@@ -185,6 +193,8 @@ export class CountryMetadataService {
         isRestricted: true,
         complianceRules: [],
         cashOutMethods: [],
+        riskScore: 100,
+        riskLevel: 'high',
       };
     }
 
@@ -212,6 +222,8 @@ export class CountryMetadataService {
       isRestricted: false,
       complianceRules: staticData.complianceRules,
       cashOutMethods: staticData.cashOutMethods,
+      riskScore: riskProfile.score,
+      riskLevel: riskProfile.level,
     };
 
     if (isStale && cached) {
@@ -219,6 +231,33 @@ export class CountryMetadataService {
     }
 
     return result;
+  }
+
+  getRiskProfile(code: string): { score: number; level: 'low' | 'medium' | 'high' } {
+    const upper = code.toUpperCase();
+
+    if (RESTRICTED_COUNTRIES.has(upper)) {
+      return { score: 100, level: 'high' };
+    }
+
+    const staticData = COUNTRY_REGISTRY[upper];
+    if (!staticData) {
+      throw new NotFoundError(`Country not supported: ${upper}`);
+    }
+
+    const complianceWeight = Math.min(staticData.complianceRules.length * 8, 24);
+    const methodWeight = Math.max(0, 12 - staticData.cashOutMethods.length * 2);
+    const score = Math.min(100, staticData.baselineRisk + complianceWeight + methodWeight);
+
+    if (score >= 60) {
+      return { score, level: 'high' };
+    }
+
+    if (score >= 35) {
+      return { score, level: 'medium' };
+    }
+
+    return { score, level: 'low' };
   }
 
   /**

@@ -42,6 +42,7 @@ const AdminApiTraces = lazy(() => import("./pages/AdminApiTraces"));
 const RecipientVerification = lazy(() => import("./pages/RecipientVerification"));
 const CashFlowAnalytics = lazy(() => import("./pages/CashFlowAnalytics"));
 const AdminThresholdRules = lazy(() => import("./pages/AdminThresholdRules"));
+const AdminOperationsWorkspace = lazy(() => import("./pages/AdminOperationsWorkspace"));
 const VerificationFlow = lazy(() =>
   import("./components/VerificationFlow").then((module) => ({
     default: module.VerificationFlow,
@@ -293,6 +294,14 @@ function AppRoutes() {
           element={
             <ProtectedRoute>
               <AdminThresholdRules />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/operations"
+          element={
+            <ProtectedRoute>
+              <AdminOperationsWorkspace />
             </ProtectedRoute>
           }
         />

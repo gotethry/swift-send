@@ -1,26 +1,44 @@
 import { v4 as uuidv4 } from 'uuid';
 
-export type EscrowStatus = 'held' | 'released' | 'refunded' | 'disputed' | 'cancelled';
+export type EscrowStatus = 'held' | 'released' | 'refunded' | 'disputed' | 'cancelled' | 'expired';
 
 export interface EscrowEntry {
   id: string;
   transferId: string;
+  userId?: string;
   amount: number;
   currency: string;
   status: EscrowStatus;
   createdAt: string;
   updatedAt: string;
+  expiresAt: string;
   failureReason?: string;
 }
 
-const TERMINAL_STATES: EscrowStatus[] = ['released', 'refunded', 'cancelled'];
+const TERMINAL_STATES: EscrowStatus[] = ['released', 'refunded', 'cancelled', 'expired'];
+const ESCROW_TTL_MS = 72 * 60 * 60 * 1000;
 
 const store: Record<string, EscrowEntry> = {};
 
-export async function createEscrow(transferId: string, amount: number, currency = 'USD') {
+export async function createEscrow(
+  transferId: string,
+  amount: number,
+  currency = 'USD',
+  userId?: string,
+) {
   const id = uuidv4();
   const now = new Date().toISOString();
-  const e: EscrowEntry = { id, transferId, amount, currency, status: 'held', createdAt: now, updatedAt: now };
+  const e: EscrowEntry = {
+    id,
+    transferId,
+    userId,
+    amount,
+    currency,
+    status: 'held',
+    createdAt: now,
+    updatedAt: now,
+    expiresAt: new Date(Date.now() + ESCROW_TTL_MS).toISOString(),
+  };
   store[transferId] = e;
   return e;
 }
@@ -81,4 +99,32 @@ export async function cancelEscrow(transferId: string, reason?: string) {
     );
   }
   return updateStatus(transferId, 'cancelled', reason);
+}
+
+export function listExpiringEscrows(withinHours = 24) {
+  const threshold = Date.now() + Math.max(0, withinHours) * 60 * 60 * 1000;
+  return Object.values(store)
+    .filter((escrow) => escrow.status === 'held' && new Date(escrow.expiresAt).getTime() <= threshold)
+    .sort((a, b) => new Date(a.expiresAt).getTime() - new Date(b.expiresAt).getTime());
+}
+
+export async function cleanupExpiredEscrows(now = Date.now()) {
+  const expired: EscrowEntry[] = [];
+
+  for (const escrow of Object.values(store)) {
+    if (escrow.status !== 'held') {
+      continue;
+    }
+
+    if (new Date(escrow.expiresAt).getTime() > now) {
+      continue;
+    }
+
+    escrow.status = 'expired';
+    escrow.updatedAt = new Date(now).toISOString();
+    escrow.failureReason = 'Escrow expired automatically';
+    expired.push(escrow);
+  }
+
+  return expired;
 }

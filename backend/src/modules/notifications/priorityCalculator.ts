@@ -23,7 +23,7 @@ export class PriorityCalculator {
   calculatePriority(notification: UserNotification): PriorityLevel {
     const kind = notification.metadata?.kind as string | undefined;
     
-    if (kind === 'fraud_flagged' || kind === 'escrow_disputed') {
+    if (kind === 'fraud_flagged' || kind === 'escrow_disputed' || kind === 'escrow_expired') {
       return 'critical';
     }
     
