@@ -1,21 +1,25 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from "react";
-import { login as loginRequest, logout as logoutRequest, verifyCode as verifyCodeRequest, resendCode as resendCodeRequest, unlockAccount as unlockAccountRequest, authMe as authMeRequest, parseUserDto } from '@/lib/auth';
+import { login as loginRequest, logout as logoutRequest, verifyCode as verifyCodeRequest, stepUpVerifyCode as stepUpVerifyCodeRequest, resendCode as resendCodeRequest, unlockAccount as unlockAccountRequest, authMe as authMeRequest, parseUserDto } from '@/lib/auth';
 import type { AuthUser, User } from '@/types';
 
 interface AuthContextType {
   user: User | null;
   authUser: AuthUser | null;
   isAuthenticated: boolean;
-  onboardingStep: string | null;
+  onboardingStep: number | null;
+  forceVerification: boolean;
   transactionSigningSecret: string | null;
   login: (identifier: string) => Promise<ReturnType<typeof loginRequest>>;
   logout: () => Promise<void>;
-  verifyCode: (code: string) => Promise<ReturnType<typeof verifyCodeRequest>>;
+  verifyCode: (code: string) => Promise<ReturnType<typeof verifyCodeRequest> | ReturnType<typeof stepUpVerifyCodeRequest>>;
   resendCode: () => Promise<ReturnType<typeof resendCodeRequest>>;
   unlockAccount: () => Promise<ReturnType<typeof unlockAccountRequest>>;
-  setOnboardingStep: (step: string | null) => void;
+  clearForceVerification: () => void;
+  setOnboardingStep: (step: number | null) => void;
   completeOnboarding: () => void;
   updateBalance: (newBalance: number) => void;
+  refreshUser: () => Promise<User | null>;
+  refreshSession: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -23,12 +27,26 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
-  const [onboardingStep, setOnboardingStep] = useState<string | null>(null);
+  const [onboardingStep, setOnboardingStep] = useState<number | null>(null);
+  const [forceVerification, setForceVerification] = useState(false);
+
+  const refreshSession = async () => {
+    try {
+      const result = await authMeRequest();
+      setAuthUser(result.authUser);
+      setUser(result.user ? parseUserDto(result.user) : null);
+      if (result.onboardingRequired) {
+        setOnboardingStep(1);
+      }
+    } catch {
+      // ignore restore failures
+    }
+  };
 
   useEffect(() => {
     let mounted = true;
 
-    const restoreSession = async () => {
+    void (async () => {
       try {
         const result = await authMeRequest();
         if (!mounted) return;
@@ -40,12 +58,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } catch {
         // ignore restore failures
       }
+    })();
+
+    const handleReauthRequired = () => {
+      // Preserve auth state but force the UI into OTP verification step.
+      setForceVerification(true);
     };
 
-    void restoreSession();
+    window.addEventListener('swiftsend:reauth_required', handleReauthRequired);
 
     return () => {
       mounted = false;
+      window.removeEventListener('swiftsend:reauth_required', handleReauthRequired);
     };
   }, []);
 
@@ -53,13 +77,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const result = await loginRequest(identifier);
     setAuthUser(result.authUser);
     setUser(result.user ? parseUserDto(result.user) : null);
+    setForceVerification(false);
     return result;
   };
 
   const verifyCode = async (code: string) => {
+    if (forceVerification) {
+      const result = await stepUpVerifyCodeRequest(code);
+      setAuthUser(result.authUser);
+      setUser(result.user ? parseUserDto(result.user) : null);
+      setForceVerification(false);
+      return result;
+    }
+
     const result = await verifyCodeRequest(code);
     setAuthUser(result.authUser);
     setUser(result.user ? parseUserDto(result.user) : null);
+    setForceVerification(false);
     return result;
   };
 
@@ -71,11 +105,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return await unlockAccountRequest();
   };
 
+  const refreshUser = async () => {
+    const result = await authMeRequest();
+    setAuthUser(result.authUser);
+    const refreshedUser = result.user ? parseUserDto(result.user) : null;
+    setUser(refreshedUser);
+    return refreshedUser;
+  };
+
   const logout = async () => {
     await logoutRequest();
     setUser(null);
     setAuthUser(null);
     setOnboardingStep(null);
+    setForceVerification(false);
   };
 
   const completeOnboarding = () => {
@@ -93,15 +136,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         authUser,
         isAuthenticated: !!user,
         onboardingStep,
+        forceVerification,
         transactionSigningSecret: null,
         login,
         logout,
         verifyCode,
         resendCode,
         unlockAccount,
+        clearForceVerification: () => setForceVerification(false),
         setOnboardingStep,
         completeOnboarding,
         updateBalance,
+        refreshUser,
+        refreshSession,
       }}
     >
       {children}</AuthContext.Provider>

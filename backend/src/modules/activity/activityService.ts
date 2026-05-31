@@ -45,6 +45,13 @@ export interface TransactionSearchParams {
   offset?: number;
 }
 
+export interface TransactionSearchBenchmarkDto {
+  scanned: number;
+  matched: number;
+  elapsedMs: number;
+  indexUsed: boolean;
+}
+
 export interface SpendingInsightsDto {
   summary: {
     totalSent: number;
@@ -58,12 +65,26 @@ export interface SpendingInsightsDto {
     averageTransfer: number;
     topCategory?: string;
   };
+  weeklyTransferData: Array<{
+    week: string;
+    sent: number;
+    successful: number;
+    failed: number;
+    count: number;
+  }>;
   monthlyTransferData: Array<{
     month: string;
     sent: number;
     successful: number;
     failed: number;
     count: number;
+  }>;
+  recipientTrends: Array<{
+    recipientName: string;
+    amount: number;
+    count: number;
+    averageAmount: number;
+    lastTransferAt: string;
   }>;
   categoryData: Array<{
     category: string;
@@ -100,6 +121,22 @@ export interface AdminFeeAnalyticsDto {
     fees: number;
     transfers: number;
   }>;
+  growth: {
+    feesGrowthPct: number;
+    volumeGrowthPct: number;
+    transfersGrowthPct: number;
+    windowDays: number;
+  };
+  forecast: Array<{
+    month: string;
+    projectedVolume: number;
+    projectedFees: number;
+    projectedTransfers: number;
+  }>;
+  historicalComparison: {
+    trailing30Days: { volume: number; fees: number; transfers: number };
+    previous30Days: { volume: number; fees: number; transfers: number };
+  };
   corridorFees: Array<{
     corridor: string;
     transfers: number;
@@ -264,6 +301,7 @@ export class ActivityService {
     const successfulOrPending = transactions.filter((transaction) => transaction.status !== 'failed');
     const successfulOnly = transactions.filter((transaction) => transaction.status === 'completed');
     const now = new Date();
+    const recipientMap = new Map<string, { recipientName: string; amount: number; count: number; lastTransferAt: string }>();
 
     const summary = {
       totalSent: round2(successfulOrPending.reduce((sum, transaction) => sum + transaction.amount, 0)),
@@ -320,9 +358,37 @@ export class ActivityService {
       }
       if (transaction.status === 'failed') {
         existing.failed += transaction.amount;
+        }
+        existing.count += 1;
+        monthlyMap.set(monthKey, existing);
+      });
+
+    const weeklyMap = new Map<string, { week: string; sent: number; successful: number; failed: number; count: number }>();
+    transactions.forEach((transaction) => {
+      const date = new Date(transaction.timestamp);
+      const weekStart = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+      const utcDay = weekStart.getUTCDay() || 7;
+      weekStart.setUTCDate(weekStart.getUTCDate() - (utcDay - 1));
+      const weekKey = weekStart.toISOString().slice(0, 10);
+      const existing = weeklyMap.get(weekKey) || {
+        week: `Week of ${weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`,
+        sent: 0,
+        successful: 0,
+        failed: 0,
+        count: 0,
+      };
+
+      if (transaction.status !== 'failed') {
+        existing.sent += transaction.amount;
+      }
+      if (transaction.status === 'completed') {
+        existing.successful += transaction.amount;
+      }
+      if (transaction.status === 'failed') {
+        existing.failed += transaction.amount;
       }
       existing.count += 1;
-      monthlyMap.set(monthKey, existing);
+      weeklyMap.set(weekKey, existing);
     });
 
     const categoryMap = new Map<string, { category: string; value: number; count: number }>();
@@ -332,6 +398,22 @@ export class ActivityService {
       existing.value += transaction.amount;
       existing.count += 1;
       categoryMap.set(category, existing);
+    });
+
+    successfulOrPending.forEach((transaction) => {
+      const recipientName = transaction.recipientName || 'Unknown recipient';
+      const existing = recipientMap.get(recipientName) || {
+        recipientName,
+        amount: 0,
+        count: 0,
+        lastTransferAt: transaction.timestamp,
+      };
+      existing.amount += transaction.amount;
+      existing.count += 1;
+      if (new Date(transaction.timestamp).getTime() > new Date(existing.lastTransferAt).getTime()) {
+        existing.lastTransferAt = transaction.timestamp;
+      }
+      recipientMap.set(recipientName, existing);
     });
 
     const categoryData = Array.from(categoryMap.values())
@@ -345,6 +427,15 @@ export class ActivityService {
 
     const insights: SpendingInsightsDto = {
       summary,
+      weeklyTransferData: Array.from(weeklyMap.entries())
+        .sort(([a], [b]) => a.localeCompare(b))
+        .slice(-8)
+        .map(([, value]) => ({
+          ...value,
+          sent: round2(value.sent),
+          successful: round2(value.successful),
+          failed: round2(value.failed),
+        })),
       monthlyTransferData: Array.from(monthlyMap.entries())
         .sort(([a], [b]) => a.localeCompare(b))
         .slice(-6)
@@ -353,6 +444,14 @@ export class ActivityService {
           sent: round2(value.sent),
           successful: round2(value.successful),
           failed: round2(value.failed),
+        })),
+      recipientTrends: Array.from(recipientMap.values())
+        .sort((a, b) => b.amount - a.amount)
+        .slice(0, 5)
+        .map((entry) => ({
+          ...entry,
+          amount: round2(entry.amount),
+          averageAmount: round2(entry.count > 0 ? entry.amount / entry.count : 0),
         })),
       categoryData,
       topExpenses: successfulOnly
@@ -392,6 +491,14 @@ export class ActivityService {
     let failedTransfers = 0;
     let thisMonthFees = 0;
     let thisMonthVolume = 0;
+    let trailing30Fees = 0;
+    let trailing30Volume = 0;
+    let trailing30Transfers = 0;
+    let previous30Fees = 0;
+    let previous30Volume = 0;
+    let previous30Transfers = 0;
+    const trailing30Cutoff = now.getTime() - 30 * 24 * 60 * 60 * 1000;
+    const previous30Cutoff = now.getTime() - 60 * 24 * 60 * 60 * 1000;
 
     records.forEach((record) => {
       const fees = getFees(record.metadata);
@@ -415,6 +522,17 @@ export class ActivityService {
       ) {
         thisMonthFees += fees.totalFee;
         thisMonthVolume += record.amount;
+      }
+
+      const ts = recordDate.getTime();
+      if (ts >= trailing30Cutoff) {
+        trailing30Fees += fees.totalFee;
+        trailing30Volume += record.amount;
+        trailing30Transfers += 1;
+      } else if (ts >= previous30Cutoff) {
+        previous30Fees += fees.totalFee;
+        previous30Volume += record.amount;
+        previous30Transfers += 1;
       }
 
       const monthKey = `${recordDate.getUTCFullYear()}-${String(recordDate.getUTCMonth() + 1).padStart(2, '0')}`;
@@ -442,6 +560,29 @@ export class ActivityService {
       corridorMap.set(corridorKey, corridorEntry);
     });
 
+    const monthlySeries = Array.from(monthlyMap.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .slice(-6)
+      .map(([, entry]) => ({
+        month: entry.month,
+        volume: round2(entry.volume),
+        fees: round2(entry.fees),
+        transfers: entry.transfers,
+      }));
+
+    const feesGrowthPct =
+      previous30Fees > 0 ? round2(((trailing30Fees - previous30Fees) / previous30Fees) * 100) : 0;
+    const volumeGrowthPct =
+      previous30Volume > 0
+        ? round2(((trailing30Volume - previous30Volume) / previous30Volume) * 100)
+        : 0;
+    const transfersGrowthPct =
+      previous30Transfers > 0
+        ? round2(((trailing30Transfers - previous30Transfers) / previous30Transfers) * 100)
+        : 0;
+
+    const forecast = this.buildForecast(monthlySeries, 3);
+
     return {
       summary: {
         totalTransfers: records.length,
@@ -456,15 +597,26 @@ export class ActivityService {
         thisMonthFees: round2(thisMonthFees),
         thisMonthVolume: round2(thisMonthVolume),
       },
-      monthlyFees: Array.from(monthlyMap.entries())
-        .sort(([a], [b]) => a.localeCompare(b))
-        .slice(-6)
-        .map(([, entry]) => ({
-          month: entry.month,
-          volume: round2(entry.volume),
-          fees: round2(entry.fees),
-          transfers: entry.transfers,
-        })),
+      monthlyFees: monthlySeries,
+      growth: {
+        feesGrowthPct,
+        volumeGrowthPct,
+        transfersGrowthPct,
+        windowDays: 30,
+      },
+      forecast,
+      historicalComparison: {
+        trailing30Days: {
+          volume: round2(trailing30Volume),
+          fees: round2(trailing30Fees),
+          transfers: trailing30Transfers,
+        },
+        previous30Days: {
+          volume: round2(previous30Volume),
+          fees: round2(previous30Fees),
+          transfers: previous30Transfers,
+        },
+      },
       corridorFees: Array.from(corridorMap.values())
         .sort((a, b) => b.fees - a.fees)
         .slice(0, 6)
@@ -491,51 +643,62 @@ export class ActivityService {
     };
   }
 
+  private buildForecast(
+    monthlyFees: Array<{ month: string; volume: number; fees: number; transfers: number }>,
+    months: number,
+  ) {
+    if (monthlyFees.length === 0) {
+      return [];
+    }
+
+    const recent = monthlyFees.slice(-Math.min(6, monthlyFees.length));
+    const feeDelta = this.averageDelta(recent.map((m) => m.fees));
+    const volumeDelta = this.averageDelta(recent.map((m) => m.volume));
+    const transferDelta = this.averageDelta(recent.map((m) => m.transfers));
+
+    const last = recent[recent.length - 1];
+    const start = new Date();
+    const output: Array<{
+      month: string;
+      projectedVolume: number;
+      projectedFees: number;
+      projectedTransfers: number;
+    }> = [];
+
+    for (let i = 1; i <= months; i += 1) {
+      const monthDate = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + i, 1));
+      output.push({
+        month: monthDate.toLocaleString('en-US', { month: 'short' }),
+        projectedFees: round2(Math.max(0, last.fees + feeDelta * i)),
+        projectedVolume: round2(Math.max(0, last.volume + volumeDelta * i)),
+        projectedTransfers: Math.max(0, Math.round(last.transfers + transferDelta * i)),
+      });
+    }
+
+    return output;
+  }
+
+  private averageDelta(values: number[]) {
+    if (values.length < 2) {
+      return 0;
+    }
+    let total = 0;
+    for (let i = 1; i < values.length; i += 1) {
+      total += values[i] - values[i - 1];
+    }
+    return total / (values.length - 1);
+  }
+
   async searchTransactions(
     userId: string,
     params: TransactionSearchParams,
-  ): Promise<{ items: ActivityTransactionDto[]; total: number }> {
-    const all = await this.repository.listByUserId(userId);
-    let results = all.map((r) => this.toTransactionDto(r));
-
-    const q = params.q?.trim().toLowerCase();
-    if (q) {
-      results = results.filter(
-        (t) =>
-          t.recipientName.toLowerCase().includes(q) ||
-          t.recipientPhone.toLowerCase().includes(q) ||
-          t.id.toLowerCase().includes(q),
-      );
-    }
-
-    if (params.status) {
-      results = results.filter((t) => t.status === params.status);
-    }
-
-    if (params.dateFrom) {
-      const from = new Date(params.dateFrom).getTime();
-      results = results.filter((t) => new Date(t.timestamp).getTime() >= from);
-    }
-
-    if (params.dateTo) {
-      const to = new Date(params.dateTo).getTime();
-      results = results.filter((t) => new Date(t.timestamp).getTime() <= to);
-    }
-
-    if (params.amountMin !== undefined) {
-      results = results.filter((t) => t.amount >= params.amountMin!);
-    }
-
-    if (params.amountMax !== undefined) {
-      results = results.filter((t) => t.amount <= params.amountMax!);
-    }
-
-    const total = results.length;
-    const offset = Math.max(0, params.offset ?? 0);
-    const limit = Math.min(100, Math.max(1, params.limit ?? 50));
-    const items = results.slice(offset, offset + limit);
-
-    return { items, total };
+  ): Promise<{ items: ActivityTransactionDto[]; total: number; benchmark: TransactionSearchBenchmarkDto }> {
+    const result = await this.repository.searchByUserId(userId, params);
+    return {
+      items: result.records.map((record) => this.toTransactionDto(record)),
+      total: result.total,
+      benchmark: result.benchmark,
+    };
   }
 
   listNotifications(userId: string, limit = 5) {

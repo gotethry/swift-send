@@ -23,23 +23,23 @@ export class PriorityCalculator {
   calculatePriority(notification: UserNotification): PriorityLevel {
     const kind = notification.metadata?.kind as string | undefined;
     
-    if (kind === 'fraud_flagged') {
+    if (kind === 'fraud_flagged' || kind === 'escrow_disputed' || kind === 'escrow_expired') {
       return 'critical';
     }
     
-    if (notification.type === 'error' && kind === 'transfer_failed') {
+    if ((notification.type === 'error' && kind === 'transfer_failed') || kind === 'escrow_delayed') {
       return 'critical';
     }
     
-    if (notification.type === 'warning') {
+    if (notification.type === 'warning' || kind === 'escrow_refunded') {
       return 'high';
     }
     
-    if (notification.type === 'success' && kind === 'transfer_settled') {
+    if (notification.type === 'success' && (kind === 'transfer_settled' || kind === 'escrow_released')) {
       return 'medium';
     }
     
-    if (notification.type === 'info') {
+    if (notification.type === 'info' || kind === 'escrow_created') {
       return 'low';
     }
     

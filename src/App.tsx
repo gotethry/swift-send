@@ -10,6 +10,7 @@ import { ComplianceProvider } from "./contexts/ComplianceContext";
 import { LanguageProvider } from "./contexts/LanguageContext";
 import { NetworkProvider } from "./contexts/NetworkContext";
 import { SecurityProvider } from "./contexts/SecurityContext";
+import { BandwidthProvider } from "./contexts/BandwidthContext";
 
 const Auth = lazy(() => import("./pages/Auth"));
 const Dashboard = lazy(() => import("./pages/Dashboard"));
@@ -29,9 +30,19 @@ const AdminErrorDashboard = lazy(() => import("./pages/AdminErrorDashboard"));
 const AdminComplianceLogs = lazy(() => import("./pages/AdminComplianceLogs"));
 const AdminDeadLetterQueue = lazy(() => import("./pages/AdminDeadLetterQueue"));
 const AdminSettlementAnalytics = lazy(() => import("./pages/AdminSettlementAnalytics"));
+const AdminRevenueForecasting = lazy(() => import("./pages/AdminRevenueForecasting"));
 const AdminStellarMonitor = lazy(() => import("./pages/AdminStellarMonitor"));
 const AdminFailureAlerts = lazy(() => import("./pages/AdminFailureAlerts"));
 const AdminOperationalMetrics = lazy(() => import("./pages/AdminOperationalMetrics"));
+const AdminRegulatoryReports = lazy(() => import("./pages/AdminRegulatoryReports"));
+const AdminApiUsage = lazy(() => import("./pages/AdminApiUsage"));
+const ActivityHeatmap = lazy(() => import("./pages/ActivityHeatmap"));
+const InsightsDashboard = lazy(() => import("./pages/InsightsDashboard"));
+const AdminApiTraces = lazy(() => import("./pages/AdminApiTraces"));
+const RecipientVerification = lazy(() => import("./pages/RecipientVerification"));
+const CashFlowAnalytics = lazy(() => import("./pages/CashFlowAnalytics"));
+const AdminThresholdRules = lazy(() => import("./pages/AdminThresholdRules"));
+const AdminOperationsWorkspace = lazy(() => import("./pages/AdminOperationsWorkspace"));
 const VerificationFlow = lazy(() =>
   import("./components/VerificationFlow").then((module) => ({
     default: module.VerificationFlow,
@@ -151,6 +162,14 @@ function AppRoutes() {
           }
         />
         <Route
+          path="/insights"
+          element={
+            <ProtectedRoute>
+              <InsightsDashboard />
+            </ProtectedRoute>
+          }
+        />
+        <Route
           path="/refunds"
           element={
             <ProtectedRoute>
@@ -199,6 +218,14 @@ function AppRoutes() {
           }
         />
         <Route
+          path="/admin/revenue-forecasting"
+          element={
+            <ProtectedRoute>
+              <AdminRevenueForecasting />
+            </ProtectedRoute>
+          }
+        />
+        <Route
           path="/admin/settlements"
           element={
             <ProtectedRoute>
@@ -230,6 +257,62 @@ function AppRoutes() {
             </ProtectedRoute>
           }
         />
+        <Route
+          path="/admin/api-usage"
+          element={
+            <ProtectedRoute>
+              <AdminApiUsage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/reports"
+          element={
+            <ProtectedRoute>
+              <AdminRegulatoryReports />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/traces"
+          element={
+            <ProtectedRoute>
+              <AdminApiTraces />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/verifications"
+          element={
+            <ProtectedRoute>
+              <RecipientVerification />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/thresholds"
+          element={
+            <ProtectedRoute>
+              <AdminThresholdRules />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/operations"
+          element={
+            <ProtectedRoute>
+              <AdminOperationsWorkspace />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/analytics/cash-flow"
+          element={
+            <ProtectedRoute>
+              <CashFlowAnalytics />
+            </ProtectedRoute>
+          }
+        />
         <Route path="*" element={<NotFound />} />
       </Routes>
     </Suspense>
@@ -241,20 +324,22 @@ const App = () => (
     <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
       <LanguageProvider>
         <TooltipProvider>
-          <AuthProvider>
-            <WalletProvider>
-              <ComplianceProvider>
-                <NetworkProvider>
-                  <SecurityProvider>
-                    <SonnerToaster />
-                    <BrowserRouter>
-                      <AppRoutes />
-                    </BrowserRouter>
-                  </SecurityProvider>
-                </NetworkProvider>
-              </ComplianceProvider>
-            </WalletProvider>
-          </AuthProvider>
+          <BandwidthProvider>
+            <AuthProvider>
+              <WalletProvider>
+                <ComplianceProvider>
+                  <NetworkProvider>
+                    <SecurityProvider>
+                      <SonnerToaster />
+                      <BrowserRouter>
+                        <AppRoutes />
+                      </BrowserRouter>
+                    </SecurityProvider>
+                  </NetworkProvider>
+                </ComplianceProvider>
+              </WalletProvider>
+            </AuthProvider>
+          </BandwidthProvider>
         </TooltipProvider>
       </LanguageProvider>
     </ThemeProvider>

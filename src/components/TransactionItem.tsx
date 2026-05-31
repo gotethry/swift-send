@@ -3,6 +3,7 @@ import { ArrowUpRight, ArrowDownLeft, Phone, Receipt, Clock, ExternalLink, Zap, 
 import { Transaction } from '@/types';
 import { StatusBadge } from './StatusBadge';
 import { Badge } from './ui/badge';
+import { Button } from './ui/button';
 import { cn } from '@/lib/utils';
 import { formatDistanceToNow, format } from 'date-fns';
 import { splitFee } from '@/lib/fees';
@@ -118,8 +119,30 @@ function TransactionItemComponent({
               <span>{relativeTime}</span>
             </div>
           </div>
-          <div className="flex justify-end mt-1">
+          <div className="flex items-center justify-between mt-1">
             <StatusBadge status={transaction.status} />
+            {(transaction.explorerUrl || transaction.txHash) && (
+              <Button
+                variant="ghost"
+                size="sm"
+                asChild
+                className="h-7 text-xs px-2"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <a
+                  href={
+                    transaction.explorerUrl ||
+                    `https://stellar.expert/explorer/public/tx/${transaction.txHash}`
+                  }
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-700"
+                >
+                  View on Explorer
+                  <ExternalLink className="w-3 h-3" />
+                </a>
+              </Button>
+            )}
           </div>
         </div>
       </div>
@@ -183,19 +206,26 @@ function TransactionItemComponent({
                 </p>
               )}
               {(transaction.explorerUrl || transaction.txHash) && (
-                <a
-                  href={
-                    transaction.explorerUrl ||
-                    `https://stellar.expert/explorer/public/tx/${transaction.txHash}`
-                  }
-                  target="_blank"
-                  rel="noreferrer"
-                  className="mt-1 inline-flex items-center gap-1 text-[11px] text-blue-600 hover:underline"
+                <Button
+                  variant="outline"
+                  size="sm"
+                  asChild
+                  className="mt-2 h-7 text-xs"
                   onClick={(event) => event.stopPropagation()}
                 >
-                  Open in Stellar Explorer
-                  <ExternalLink className="w-3 h-3" />
-                </a>
+                  <a
+                    href={
+                      transaction.explorerUrl ||
+                      `https://stellar.expert/explorer/public/tx/${transaction.txHash}`
+                    }
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1"
+                  >
+                    View on Explorer
+                    <ExternalLink className="w-3 h-3" />
+                  </a>
+                </Button>
               )}
             </div>
           </div>
@@ -382,7 +412,7 @@ function TransactionItemComponent({
           </div>
         </div>
       )}
-    </div>
+    </button>
   );
 }
 

@@ -4,6 +4,7 @@ import type { JwtSessionPayload } from "../auth/sessionTypes";
 
 interface NotificationsQuery {
   limit?: string;
+  compact?: string;
 }
 
 export default async function notificationRoutes(fastify: FastifyInstance) {
@@ -15,11 +16,13 @@ export default async function notificationRoutes(fastify: FastifyInstance) {
     authGuards,
     async (req) => {
       const payload = req.user as JwtSessionPayload;
-      const limit = Number(req.query.limit || 20);
-      return fastify.container.services.notification.listByUserId(
-        payload.sub,
-        limit,
-      );
+      const headerCompact = req.headers['x-low-bandwidth'] === '1';
+      const queryCompact = req.query.compact === '1' || req.query.compact === 'true';
+      const compact = headerCompact || queryCompact;
+      const fallbackLimit = compact ? 10 : 20;
+      const hardMax = compact ? 25 : 100;
+      const limit = Math.min(hardMax, Math.max(1, Number(req.query.limit || fallbackLimit)));
+      return fastify.container.services.notification.listByUserId(payload.sub, limit);
     },
   );
 

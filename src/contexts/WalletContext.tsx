@@ -1,6 +1,8 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback, ReactNode } from 'react';
 import { StellarAccount, StellarWallet, WalletTransaction, WalletProvider, WalletConnectionState, LinkedWallet } from '@/types';
 import { toast } from 'sonner';
+import { apiFetch } from '@/lib/api';
+import { useBandwidth } from '@/contexts/BandwidthContext';
 
 interface WalletContextType {
   connectionState: WalletConnectionState;
@@ -61,6 +63,7 @@ function toStableTxId() {
 }
 
 export function WalletProvider({ children }: { children: ReactNode }) {
+  const { isLowBandwidth } = useBandwidth();
   const [connectionState, setConnectionState] = useState<WalletConnectionState>(() => {
     const storedWallets = parseStoredLinkedWallets(localStorage.getItem(LINKED_WALLETS_STORAGE_KEY));
     return {
@@ -113,9 +116,9 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     void syncPendingTransactions();
     const interval = setInterval(() => {
       void syncPendingTransactions();
-    }, 8000);
+    }, isLowBandwidth ? 20_000 : 8000);
     return () => clearInterval(interval);
-  }, [connectionState.isConnected, syncPendingTransactions]);
+  }, [connectionState.isConnected, syncPendingTransactions, isLowBandwidth]);
 
   // Enhanced Freighter detection with immediate and continuous checking
   useEffect(() => {
@@ -516,6 +519,25 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         provider
       }));
 
+      // Persist link server-side (best-effort) for recovery across devices.
+      try {
+        await apiFetch('/wallets/linked', {
+          method: 'POST',
+          body: JSON.stringify({
+            wallet: {
+              id: newLinkedWallet.id,
+              publicKey: newLinkedWallet.publicKey,
+              provider: newLinkedWallet.provider,
+              label: newLinkedWallet.label,
+              isPrimary: newLinkedWallet.isPrimary,
+              linkedAt: newLinkedWallet.linkedAt.toISOString(),
+            },
+          }),
+        });
+      } catch {
+        // ignore; client local storage still works
+      }
+
       if (account.isReal) {
         toast.success(`🎉 Real ${wallet.name} Connected!`, {
           description: `Address: ${account.publicKey.slice(0, 8)}...${account.publicKey.slice(-8)}`
@@ -588,6 +610,12 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       }));
       toast.success('Wallet disconnected');
     }
+
+    // Best-effort unlink server-side.
+    void apiFetch('/wallets/linked', {
+      method: 'DELETE',
+      body: JSON.stringify({ walletId }),
+    }).catch(() => undefined);
   };
 
   const switchWallet = (walletId: string) => {
@@ -618,6 +646,11 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     }));
 
     toast.success('Primary wallet updated');
+
+    void apiFetch('/wallets/linked/primary', {
+      method: 'POST',
+      body: JSON.stringify({ walletId }),
+    }).catch(() => undefined);
   };
 
   const renameWallet = (walletId: string, label: string) => {

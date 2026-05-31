@@ -204,6 +204,10 @@ export class RateLimiter {
       totalAttempts,
     };
   }
+
+  getConfig(): RateLimitConfig {
+    return this.config;
+  }
 }
 
 // Export singleton instances for different endpoints
@@ -222,5 +226,11 @@ export const verifyRateLimiter = new RateLimiter({
 export const resendRateLimiter = new RateLimiter({
   maxAttempts: 3,
   windowMs: 60 * 60 * 1000, // 1 hour
+  lockoutDurationMs: 60 * 60 * 1000, // 1 hour
+});
+
+export const recoveryRateLimiter = new RateLimiter({
+  maxAttempts: 5,
+  windowMs: 30 * 60 * 1000, // 30 minutes
   lockoutDurationMs: 60 * 60 * 1000, // 1 hour
 });

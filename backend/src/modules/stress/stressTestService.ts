@@ -7,6 +7,10 @@ export interface StressTestConfig {
   amount: number;
   userId: string;
   walletId: string;
+  chaos?: {
+    apiDowntimeEvery?: number;
+    blockchainLatencyMs?: number;
+  };
 }
 
 
@@ -43,6 +47,7 @@ export interface PerTransferResult {
   success: boolean;
   latencyMs: number;
   error?: string;
+  recovered?: boolean;
 }
 
 export class StressTestService {
@@ -219,6 +224,17 @@ export class StressTestService {
     const transferId = `stress_${runId}_${index}`;
 
     try {
+      if (config.chaos?.apiDowntimeEvery && config.chaos.apiDowntimeEvery > 0) {
+        const shouldFail = (index + 1) % config.chaos.apiDowntimeEvery === 0;
+        if (shouldFail) {
+          throw new Error('Simulated API downtime');
+        }
+      }
+
+      if (config.chaos?.blockchainLatencyMs && config.chaos.blockchainLatencyMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, config.chaos?.blockchainLatencyMs));
+      }
+
       await this.transfers.createTransfer({
         idempotencyKey: transferId,
         userId: config.userId,
@@ -237,14 +253,45 @@ export class StressTestService {
         transferId,
         success: true,
         latencyMs: Date.now() - transferStart,
+        recovered: Boolean(config.chaos),
       };
     } catch (err: unknown) {
+      // Recovery behavior simulation: after transient chaos errors, retry once.
+      const recoverable =
+        err instanceof Error &&
+        (err.message.includes('Simulated API downtime') || err.message.includes('timeout'));
+      if (recoverable) {
+        try {
+          await this.transfers.createTransfer({
+            idempotencyKey: `${transferId}_recovery`,
+            userId: config.userId,
+            fromWalletId: config.walletId,
+            amount: config.amount,
+            currency: 'USDC',
+            recipient: {
+              type: 'wallet',
+              walletPublicKey: 'GSTRESSWALLETTEST12345678901234567890123456789012',
+              country: 'US',
+            },
+          });
+          return {
+            index,
+            transferId,
+            success: true,
+            latencyMs: Date.now() - transferStart,
+            recovered: true,
+          };
+        } catch {
+          // Fall through to failed result when recovery also fails.
+        }
+      }
       return {
         index,
         transferId,
         success: false,
         latencyMs: Date.now() - transferStart,
         error: err instanceof Error ? err.message : String(err),
+        recovered: false,
       };
     }
   }

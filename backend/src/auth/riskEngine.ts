@@ -27,6 +27,8 @@ export interface AuthEvent {
   type: 'login' | 'verify' | 'verify_attempt' | 'step_up';
   ipAddress?: string;
   userAgent?: string;
+  /** SHA-256 device fingerprint generated from request headers + IP */
+  fingerprint?: string;
   success: boolean;
   timestamp: string;
 }
@@ -54,6 +56,7 @@ export class AuthRiskEngine {
 
   private authEvents = new Map<string, AuthEvent[]>();
   private knownIps = new Map<string, Set<string>>();
+  // TODO: persist knownDevices to DB when DB layer is wired (in-memory resets on restart)
   private knownDevices = new Map<string, Set<string>>();
   private suspiciousActivity: SuspiciousActivityEntry[] = [];
   private failedAttempts = new Map<string, number[]>();
@@ -78,7 +81,10 @@ export class AuthRiskEngine {
           this.knownIps.set(userId, ips);
         }
 
-        if (event.userAgent) {
+        if (event.fingerprint) {
+          this.registerFingerprint(userId, event.fingerprint);
+        } else if (event.userAgent) {
+          // Fallback to raw user-agent when fingerprint is unavailable
           const devices = this.knownDevices.get(userId) || new Set();
           devices.add(event.userAgent);
           this.knownDevices.set(userId, devices);
@@ -92,8 +98,8 @@ export class AuthRiskEngine {
     }
   }
 
-  assessRisk(userId: string, ipAddress?: string, userAgent?: string): AuthRiskAssessment {
-    const factors = this.collectRiskFactors(userId, ipAddress, userAgent);
+  assessRisk(userId: string, ipAddress?: string, userAgent?: string, fingerprint?: string): AuthRiskAssessment {
+    const factors = this.collectRiskFactors(userId, ipAddress, userAgent, fingerprint);
     const score = this.calculateRiskScore(factors);
     const level = this.scoreToLevel(score);
 
@@ -125,6 +131,12 @@ export class AuthRiskEngine {
       .slice(0, limit);
   }
 
+  registerFingerprint(userId: string, fingerprint: string): void {
+    const devices = this.knownDevices.get(userId) || new Set();
+    devices.add(fingerprint);
+    this.knownDevices.set(userId, devices);
+  }
+
   getFailedAttempts(userId: string): number {
     const attempts = this.failedAttempts.get(userId) || [];
     const windowStart = Date.now() - AuthRiskEngine.RAPID_ATTEMPT_WINDOW_MS;
@@ -137,6 +149,7 @@ export class AuthRiskEngine {
     userId: string,
     ipAddress?: string,
     userAgent?: string,
+    fingerprint?: string,
   ): AuthRiskFactors {
     const now = Date.now();
     const hour = new Date().getHours();
@@ -158,11 +171,16 @@ export class AuthRiskEngine {
       (e) => new Date(e.timestamp).getTime() >= now - AuthRiskEngine.RAPID_ATTEMPT_WINDOW_MS,
     );
 
+    // Use fingerprint for device detection when available; fall back to raw user-agent
+    const deviceIdentifier = fingerprint ?? userAgent;
+    const isNewDevice =
+      !!deviceIdentifier && knownUserDevices.size > 0 && !knownUserDevices.has(deviceIdentifier);
+
     return {
       failedAttemptsRecent: recentFailedAttempts.length,
       isUnusualTime: hour >= AuthRiskEngine.UNUSUAL_HOUR_START && hour < AuthRiskEngine.UNUSUAL_HOUR_END,
       isNewIp: !!ipAddress && knownUserIps.size > 0 && !knownUserIps.has(ipAddress),
-      isNewDevice: !!userAgent && knownUserDevices.size > 0 && !knownUserDevices.has(userAgent),
+      isNewDevice,
       rapidAttempts: recentEvents.filter((e) => !e.success).length >= AuthRiskEngine.RAPID_ATTEMPT_COUNT,
       unusualGeo: false,
       timeSinceLastLogin: lastSuccessfulLogin

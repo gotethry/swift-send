@@ -8,7 +8,7 @@ import OnboardingProfile from '@/components/OnboardingProfile';
 import OnboardingWallet from '@/components/OnboardingWallet';
 
 export default function Auth() {
-  const { user, authUser, isAuthenticated, onboardingStep } = useAuth();
+  const { user, authUser, isAuthenticated, onboardingStep, forceVerification, clearForceVerification } = useAuth();
   const navigate = useNavigate();
   const [authStep, setAuthStep] = useState<'login' | 'verify'>('login');
 
@@ -17,6 +17,12 @@ export default function Auth() {
       navigate('/dashboard');
     }
   }, [isAuthenticated, user, navigate]);
+
+  useEffect(() => {
+    if (forceVerification) {
+      setAuthStep('verify');
+    }
+  }, [forceVerification]);
 
   // If user is verified but not fully authenticated, show onboarding
   if (authUser?.isVerified && !isAuthenticated) {
@@ -35,7 +41,12 @@ export default function Auth() {
         <AuthForm onNeedsVerification={() => setAuthStep('verify')} />
       )}
       {authStep === 'verify' && (
-        <VerificationForm onBack={() => setAuthStep('login')} />
+        <VerificationForm
+          onBack={() => {
+            clearForceVerification();
+            setAuthStep('login');
+          }}
+        />
       )}
     </div>
   );

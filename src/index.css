@@ -169,6 +169,16 @@
   }
 }
 
+/* Low-bandwidth mode: suppress most animations/transitions globally. */
+:root[data-bandwidth='low'] *,
+:root[data-bandwidth='low'] *::before,
+:root[data-bandwidth='low'] *::after {
+  animation-duration: 1ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 1ms !important;
+  scroll-behavior: auto !important;
+}
+
 @keyframes fadeIn {
   from {
     opacity: 0;

@@ -8,6 +8,10 @@ interface StressTestBody {
   amount?: number;
   userId?: string;
   walletId?: string;
+  chaos?: {
+    apiDowntimeEvery?: number;
+    blockchainLatencyMs?: number;
+  };
 }
 
 export default async function stressTestRoutes(fastify: FastifyInstance) {
@@ -25,6 +29,7 @@ export default async function stressTestRoutes(fastify: FastifyInstance) {
         amount: req.body.amount || 10,
         userId: req.body.userId || 'user_stress_test',
         walletId: req.body.walletId || 'wallet_stress_test',
+        chaos: req.body.chaos,
       };
       return fastify.container.services.stressTest.runStressTest(config);
     },

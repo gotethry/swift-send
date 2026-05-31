@@ -33,6 +33,19 @@ export interface User {
   kycStatus?: 'pending' | 'verified' | 'rejected' | 'expired';
   twoFactorEnabled?: boolean;
   twoFactorSecret?: string;
+  accountType?: 'personal' | 'business';
+  businessProfile?: {
+    companyName: string;
+    role: 'owner' | 'finance_admin' | 'operator';
+    teamSize: number;
+    permissions: string[];
+    teamMembers: Array<{
+      name: string;
+      email: string;
+      role: 'owner' | 'admin' | 'approver' | 'viewer';
+      status: 'active' | 'invited';
+    }>;
+  };
 }
 
 export type UserTier = 'basic' | 'silver' | 'gold' | 'platinum';

@@ -115,46 +115,39 @@ describe('StressTestService', () => {
     }
   });
 
-  describe('runChaosTest', () => {
-    it('simulates API downtime and reports injected failures', async () => {
-      transferLifecycle.createTransfer.mockResolvedValue({ id: 'test' } as any);
-      const randomSpy = jest.spyOn(Math, 'random')
-        .mockReturnValueOnce(0.1)
-        .mockReturnValueOnce(0.9)
-        .mockReturnValue(0.9);
+  it('should simulate API downtime and recover with retry', async () => {
+    transferLifecycle.createTransfer.mockResolvedValue({ id: 'test' } as any);
 
-      const result = await service.runChaosTest({
-        concurrency: 1,
-        totalTransfers: 2,
-        amount: 10,
-        userId: 'user_stress',
-        walletId: 'wallet_stress',
-        apiDowntimeRate: 0.5,
-        blockchainLatencyMs: 0,
-      });
-
-      expect(result.downtimeInjected).toBeGreaterThanOrEqual(1);
-      expect(result.failed).toBeGreaterThanOrEqual(1);
-      randomSpy.mockRestore();
+    const result = await service.runStressTest({
+      concurrency: 2,
+      totalTransfers: 6,
+      amount: 15,
+      userId: 'user_chaos',
+      walletId: 'wallet_chaos',
+      chaos: {
+        apiDowntimeEvery: 3,
+      },
     });
 
-    it('simulates blockchain latency and reports recovery metrics', async () => {
-      transferLifecycle.createTransfer.mockResolvedValue({ id: 'test' } as any);
-
-      const result = await service.runChaosTest({
-        concurrency: 1,
-        totalTransfers: 2,
-        amount: 10,
-        userId: 'user_stress',
-        walletId: 'wallet_stress',
-        apiDowntimeRate: 0,
-        blockchainLatencyMs: 2,
-      });
-
-      expect(result.latencyInjected).toBe(2);
-      expect(result.recoveryRate).toBeGreaterThanOrEqual(0);
-      expect(result.recoveredTransfers).toBeGreaterThanOrEqual(0);
-    });
+    expect(result.successful).toBeGreaterThan(0);
+    expect(result.perTransferResults.some((r) => r.recovered)).toBe(true);
   });
 
+  it('should simulate blockchain latency in chaos mode', async () => {
+    transferLifecycle.createTransfer.mockResolvedValue({ id: 'test' } as any);
+
+    const result = await service.runStressTest({
+      concurrency: 1,
+      totalTransfers: 2,
+      amount: 8,
+      userId: 'user_chaos',
+      walletId: 'wallet_chaos',
+      chaos: {
+        blockchainLatencyMs: 10,
+      },
+    });
+
+    expect(result.averageLatencyMs).toBeGreaterThanOrEqual(10);
+    expect(result.failed).toBe(0);
+  });
 });

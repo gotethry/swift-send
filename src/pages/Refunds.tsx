@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, RotateCcw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
+import { BottomNav } from '@/components/BottomNav';
 import { useQuery } from '@tanstack/react-query';
 import { fetchRefunds } from '@/lib/activity';
 import { RefundTracker, RefundCard } from '@/components/RefundTracker';
@@ -22,7 +23,7 @@ const Refunds: React.FC = () => {
   );
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-background pb-24">
       {/* Header */}
       <div className="sticky top-0 z-10 bg-background/80 backdrop-blur-sm border-b border-border/40">
         <div className="flex items-center gap-3 px-4 py-3">
@@ -84,6 +85,8 @@ const Refunds: React.FC = () => {
           </div>
         )}
       </div>
+
+      <BottomNav />
     </div>
   );
 };

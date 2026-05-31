@@ -1,40 +1,72 @@
-import { useCallback, useState, useMemo, useEffect } from 'react';
+import { useCallback, useDeferredValue, useState, useMemo, useEffect } from 'react';
 import { ChevronDown, Search, Filter, Calendar, Banknote, TrendingUp, Clock, ArrowLeft, Download, FileText, FileSpreadsheet, Tag } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { exportToCSV, exportToPDF } from '@/lib/export';
-import { useAuth } from '@/contexts/AuthContext';
 import { TransactionItem } from '@/components/TransactionItem';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { BottomNav } from '@/components/BottomNav';
 import { useNavigate } from 'react-router-dom';
 import { ChartContainer, ChartLegend, ChartLegendContent, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart';
 import { Bar, BarChart, Cell, Pie, PieChart, XAxis, YAxis } from 'recharts';
 import { getPurposeByCode, TRANSFER_PURPOSES } from '@/data/transferPurposes';
+import { useQuery } from '@tanstack/react-query';
+import { fetchTransactions, searchTransactions } from '@/lib/activity';
+import type { Transaction } from '@/types';
+
+const PAGE_SIZE = 20;
+const EMPTY_TRANSACTIONS: Transaction[] = [];
 
 const History: React.FC = () => {
-  const { user } = useAuth();
   const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [typeFilter, setTypeFilter] = useState<string>('all');
+  const [purposeFilter, setPurposeFilter] = useState<string>('all');
   const [showFilters, setShowFilters] = useState(false);
   const [expandedTransactionId, setExpandedTransactionId] = useState<string | null>(null);
+  const deferredSearchTerm = useDeferredValue(searchTerm.trim());
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
 
   const handleGoBack = useCallback(() => {
     navigate(-1); // Go back to previous page
   }, [navigate]);
 
+  const statusParam =
+    statusFilter === 'pending' || statusFilter === 'completed' || statusFilter === 'failed'
+      ? statusFilter
+      : undefined;
+
+  const summaryQuery = useQuery({
+    queryKey: ['activity', 'history-summary'],
+    queryFn: () => fetchTransactions(100),
+  });
+
+  const transactionsQuery = useQuery({
+    queryKey: ['activity', 'transactions-search', deferredSearchTerm, statusParam, visibleCount],
+    queryFn: () =>
+      searchTransactions({
+        q: deferredSearchTerm || undefined,
+        status: statusParam,
+        limit: visibleCount,
+        offset: 0,
+      }),
+  });
+
+  const summaryTransactions = summaryQuery.data || EMPTY_TRANSACTIONS;
+  const serverTransactions = transactionsQuery.data?.items || EMPTY_TRANSACTIONS;
+
   // Calculate summary statistics
   const summary = useMemo(() => {
-    const sentTransactions = user?.transactions?.filter(t => t.type === 'send') || [];
+    const sentTransactions = summaryTransactions.filter(t => t.type === 'send') || [];
     const totalSent = sentTransactions.reduce((sum, t) => sum + t.amount, 0);
     const totalFees = sentTransactions.reduce((sum, t) => sum + t.fee, 0);
-    const pendingTransactions = user?.transactions?.filter(t => t.status === 'pending').length || 0;
-    const thisMonth = user?.transactions?.filter(t => {
+    const pendingTransactions = summaryTransactions.filter(t => t.status === 'pending').length || 0;
+    const thisMonth = summaryTransactions.filter(t => {
       const transactionDate = new Date(t.timestamp);
       const now = new Date();
       return transactionDate.getMonth() === now.getMonth() && 
@@ -42,24 +74,21 @@ const History: React.FC = () => {
     }).length || 0;
 
     return { totalSent, totalFees, pendingTransactions, thisMonth };
-  }, [user?.transactions]);
+  }, [summaryTransactions]);
 
   // Filter transactions based on search and filters
   const filteredTransactions = useMemo(() => {
-    return (user?.transactions || []).filter(transaction => {
-      const matchesSearch = transaction.recipientName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                           transaction.recipientPhone?.includes(searchTerm);
-      const matchesStatus = statusFilter === 'all' || transaction.status === statusFilter;
+    return serverTransactions.filter(transaction => {
       const matchesType = typeFilter === 'all' || transaction.type === typeFilter;
       const matchesPurpose = purposeFilter === 'all' || transaction.purposeCode === purposeFilter;
       
-      return matchesSearch && matchesStatus && matchesType && matchesPurpose;
+      return matchesType && matchesPurpose;
     });
-  }, [user?.transactions, searchTerm, statusFilter, typeFilter, purposeFilter]);
+  }, [serverTransactions, typeFilter, purposeFilter]);
 
   const monthlyTransferData = useMemo(() => {
     const monthlyMap = new Map<string, { month: string; sent: number; received: number }>();
-    (user?.transactions || []).forEach((transaction) => {
+    summaryTransactions.forEach((transaction) => {
       const date = new Date(transaction.timestamp);
       const month = date.toLocaleString('en-US', { month: 'short' });
       if (!monthlyMap.has(month)) {
@@ -72,11 +101,11 @@ const History: React.FC = () => {
     });
 
     return Array.from(monthlyMap.values()).slice(-6);
-  }, [user?.transactions]);
+  }, [summaryTransactions]);
 
   const categoryData = useMemo(() => {
     const categoryMap = new Map<string, number>();
-    (user?.transactions || [])
+    summaryTransactions
       .filter((transaction) => transaction.type === 'send')
       .forEach((transaction) => {
         const purpose = transaction.purposeCode ? getPurposeByCode(transaction.purposeCode) : null;
@@ -85,28 +114,19 @@ const History: React.FC = () => {
       });
 
     return Array.from(categoryMap.entries()).map(([category, value]) => ({ category, value }));
-  }, [user?.transactions]);
+  }, [summaryTransactions]);
 
   const handleTransactionClick = useCallback((transactionId: string) => {
     setExpandedTransactionId((currentId) => (currentId === transactionId ? null : transactionId));
   }, []);
 
-  const [purposeFilter, setPurposeFilter] = useState<string>('all');
-
-  const PAGE_SIZE = 20;
-  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
-
   // Reset pagination whenever filters change so users always see fresh results from the top
   useEffect(() => {
     setVisibleCount(PAGE_SIZE);
-  }, [searchTerm, statusFilter, typeFilter, purposeFilter]);
+  }, [deferredSearchTerm, statusFilter, typeFilter, purposeFilter]);
 
-  const paginatedTransactions = useMemo(
-    () => filteredTransactions.slice(0, visibleCount),
-    [filteredTransactions, visibleCount],
-  );
-
-  const hasMore = visibleCount < filteredTransactions.length;
+  const totalMatchingTransactions = transactionsQuery.data?.total ?? filteredTransactions.length;
+  const hasMore = visibleCount < totalMatchingTransactions;
 
   const loadMore = useCallback(() => {
     setVisibleCount((prev) => prev + PAGE_SIZE);
@@ -133,7 +153,7 @@ const History: React.FC = () => {
   ];
 
   return (
-    <div className="mx-auto w-full max-w-3xl bg-background min-h-screen px-3 sm:px-5 lg:px-6 pb-20">
+    <div className="mx-auto w-full max-w-3xl bg-background min-h-screen px-3 sm:px-5 lg:px-6 pb-24">
       <div className="sticky top-0 bg-background/95 backdrop-blur-sm z-10 border-b border-border/50">
         <div className="py-6 pb-4">
           {/* Header with back button */}
@@ -294,9 +314,9 @@ const History: React.FC = () => {
                 <div className="flex items-center gap-2">
                   <Filter className="w-4 h-4" />
                   <span>Filters</span>
-                  {(statusFilter !== 'all' || typeFilter !== 'all') && (
+                  {(statusFilter !== 'all' || typeFilter !== 'all' || purposeFilter !== 'all') && (
                     <Badge variant="secondary" className="text-xs">
-                      {[statusFilter, typeFilter].filter(f => f !== 'all').length}
+                      {[statusFilter, typeFilter, purposeFilter].filter(f => f !== 'all').length}
                     </Badge>
                   )}
                 </div>
@@ -361,9 +381,14 @@ const History: React.FC = () => {
       <div className="p-6 pt-2">
         {filteredTransactions.length === 0 ? (
           <div className="text-center py-12">
-            {searchTerm || statusFilter !== 'all' || typeFilter !== 'all' ? (
+            {transactionsQuery.isLoading ? (
               <div className="space-y-3">
-                <div className="text-4xl">🔍</div>
+                <Search className="mx-auto h-8 w-8 animate-pulse text-muted-foreground" aria-hidden="true" />
+                <h3 className="text-lg font-semibold text-foreground">Searching transactions</h3>
+              </div>
+            ) : searchTerm || statusFilter !== 'all' || typeFilter !== 'all' || purposeFilter !== 'all' ? (
+              <div className="space-y-3">
+                <Search className="mx-auto h-8 w-8 text-muted-foreground" aria-hidden="true" />
                 <h3 className="text-lg font-semibold text-foreground">No transactions found</h3>
                 <p className="text-muted-foreground text-sm">
                   Try adjusting your search or filter criteria
@@ -378,7 +403,6 @@ const History: React.FC = () => {
               </div>
             ) : (
               <div className="space-y-3">
-                <div className="text-4xl">💸</div>
                 <h3 className="text-lg font-semibold text-foreground">No transactions yet</h3>
                 <p className="text-muted-foreground text-sm">
                   Your transaction history will appear here once you send or receive money
@@ -391,9 +415,9 @@ const History: React.FC = () => {
             {/* Results header */}
             <div className="flex items-center justify-between mb-4">
               <p className="text-sm text-muted-foreground">
-                {paginatedTransactions.length} of {filteredTransactions.length} transaction{filteredTransactions.length !== 1 ? 's' : ''}
+                {filteredTransactions.length} of {totalMatchingTransactions} transaction{totalMatchingTransactions !== 1 ? 's' : ''}
               </p>
-              {(searchTerm || statusFilter !== 'all' || typeFilter !== 'all') && (
+              {(searchTerm || statusFilter !== 'all' || typeFilter !== 'all' || purposeFilter !== 'all') && (
                 <Button
                   variant="ghost"
                   size="sm"
@@ -405,7 +429,13 @@ const History: React.FC = () => {
               )}
             </div>
 
-            {paginatedTransactions.map((transaction, index) => (
+            {transactionsQuery.data?.benchmark?.indexUsed && (
+              <p className="text-xs text-muted-foreground">
+                Indexed search scanned {transactionsQuery.data.benchmark.scanned} records in {transactionsQuery.data.benchmark.elapsedMs}ms.
+              </p>
+            )}
+
+            {filteredTransactions.map((transaction, index) => (
               <div key={transaction.id} className="animate-slide-up" style={{ animationDelay: `${Math.min(index, 10) * 50}ms` }}>
                 <TransactionItem
                   transaction={transaction}
@@ -418,13 +448,21 @@ const History: React.FC = () => {
             {hasMore && (
               <div className="flex justify-center pt-4">
                 <Button variant="outline" size="sm" onClick={loadMore}>
-                  Load more ({filteredTransactions.length - visibleCount} remaining)
+                  Load more ({totalMatchingTransactions - visibleCount} remaining)
                 </Button>
               </div>
+            )}
+
+            {transactionsQuery.isError && (
+              <p className="text-sm text-destructive">
+                We couldn&apos;t search transactions right now.
+              </p>
             )}
           </div>
         )}
       </div>
+
+      <BottomNav />
     </div>
   );
 };

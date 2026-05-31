@@ -44,6 +44,33 @@ export function buildMariaUser(): PublicUser {
         linkedAt: new Date('2024-01-15').toISOString(),
       },
     ],
+    accountType: 'business',
+    businessProfile: {
+      companyName: 'Maria Logistics Group',
+      role: 'owner',
+      teamSize: 4,
+      permissions: ['send_transfers', 'manage_team', 'approve_limits'],
+      teamMembers: [
+        {
+          name: 'Maria Santos',
+          email: MARIA_EMAIL,
+          role: 'owner',
+          status: 'active',
+        },
+        {
+          name: 'Finance Lead',
+          email: 'finance@mariagroup.example',
+          role: 'admin',
+          status: 'active',
+        },
+        {
+          name: 'Operations Desk',
+          email: 'ops@mariagroup.example',
+          role: 'approver',
+          status: 'invited',
+        },
+      ],
+    },
     createdAt: new Date('2024-01-15').toISOString(),
   };
 }

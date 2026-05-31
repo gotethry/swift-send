@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -85,6 +85,7 @@ const calculateFees = (amount: number) => {
 
 export default function SendMoney() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { user, transactionSigningSecret, updateBalance } = useAuth();
   const { connectionState } = useWallet();
   const { checkTransactionCompliance } = useCompliance();
@@ -127,6 +128,28 @@ export default function SendMoney() {
   const { data: countryInfo, isLoading: countryInfoLoading, isError: countryInfoError } = useCountryInfo(selectedContact?.countryCode ?? null);
   const draft = useTransferDraft('send_money_current');
   const suggestions = useTransferSuggestions(contacts, mockTransactions);
+
+  useEffect(() => {
+    const state = location.state as { recipientName?: string; recipientPhone?: string } | null;
+    if (!state?.recipientPhone) return;
+
+    const matchingContact = contacts.find((contact) => contact.phone === state.recipientPhone);
+    if (matchingContact) {
+      setSelectedContact(matchingContact);
+      setNewRecipient(null);
+      setStep('amount');
+      return;
+    }
+
+    setRecipientInput(state.recipientPhone);
+    setNewRecipient({
+      identifier: state.recipientPhone,
+      name: state.recipientName || state.recipientPhone,
+      type: 'phone',
+    });
+    setSelectedContact(null);
+    setStep('amount');
+  }, [location.state]);
 
   const parsedBulkTransfers = useMemo(() => {
     const lines = bulkInput
@@ -883,7 +906,7 @@ export default function SendMoney() {
   }
 
   return (
-    <div className="min-h-screen bg-background pb-32 overflow-x-hidden">
+    <div className="min-h-screen bg-background pb-24 overflow-x-hidden">
       {/* Header */}
       <header className="sticky top-0 z-10 bg-background/95 backdrop-blur-sm border-b border-border px-4 sm:px-6 py-4">
         <div className="max-w-lg mx-auto flex items-center gap-3 sm:gap-4">

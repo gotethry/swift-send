@@ -2,13 +2,17 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useAuth } from '@/contexts/AuthContext';
-import { Zap, ArrowLeft, ArrowRight, User, Mail, Phone } from 'lucide-react';
+import { Zap, ArrowLeft, ArrowRight, User, Mail, Phone, Building2, BriefcaseBusiness, Users } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 export default function OnboardingProfile() {
   const [formData, setFormData] = useState({
     name: '',
     email: '',
-    phone: ''
+    phone: '',
+    accountType: 'personal' as 'personal' | 'business',
+    companyName: '',
+    role: 'owner' as 'owner' | 'finance_admin' | 'operator',
   });
   const [isLoading, setIsLoading] = useState(false);
   const { setOnboardingStep, authUser } = useAuth();
@@ -80,6 +84,51 @@ export default function OnboardingProfile() {
           </div>
 
           <div className="space-y-6">
+            {/* Account Type */}
+            <div>
+              <label className="block text-sm font-medium text-foreground mb-2">
+                Account Type
+              </label>
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => setFormData((prev) => ({ ...prev, accountType: 'personal' }))}
+                  className={cn(
+                    'rounded-xl border p-4 text-left transition-colors',
+                    formData.accountType === 'personal'
+                      ? 'border-primary bg-primary/5'
+                      : 'border-border bg-card hover:bg-muted/50',
+                  )}
+                >
+                  <div className="flex items-center gap-2 mb-1">
+                    <User className="w-4 h-4 text-primary" />
+                    <span className="font-semibold text-sm">Personal</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Standard wallet for individual transfers
+                  </p>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFormData((prev) => ({ ...prev, accountType: 'business' }))}
+                  className={cn(
+                    'rounded-xl border p-4 text-left transition-colors',
+                    formData.accountType === 'business'
+                      ? 'border-primary bg-primary/5'
+                      : 'border-border bg-card hover:bg-muted/50',
+                  )}
+                >
+                  <div className="flex items-center gap-2 mb-1">
+                    <Building2 className="w-4 h-4 text-primary" />
+                    <span className="font-semibold text-sm">Business</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Company profile with team permissions
+                  </p>
+                </button>
+              </div>
+            </div>
+
             {/* Name */}
             <div>
               <label className="block text-sm font-medium text-foreground mb-2">
@@ -98,6 +147,59 @@ export default function OnboardingProfile() {
                 />
               </div>
             </div>
+
+            {formData.accountType === 'business' && (
+              <>
+                <div>
+                  <label className="block text-sm font-medium text-foreground mb-2">
+                    Company Name *
+                  </label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                      <BriefcaseBusiness className="w-5 h-5 text-muted-foreground" />
+                    </div>
+                    <Input
+                      type="text"
+                      placeholder="Enter your company name"
+                      value={formData.companyName}
+                      onChange={(e) => handleInputChange('companyName', e.target.value)}
+                      className="pl-10"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-foreground mb-2">
+                    Role in Company
+                  </label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {[
+                      { value: 'owner', label: 'Owner' },
+                      { value: 'finance_admin', label: 'Finance' },
+                      { value: 'operator', label: 'Operator' },
+                    ].map((option) => (
+                      <button
+                        type="button"
+                        key={option.value}
+                        onClick={() => setFormData((prev) => ({ ...prev, role: option.value as typeof formData.role }))}
+                        className={cn(
+                          'rounded-lg border px-3 py-2 text-sm font-medium transition-colors',
+                          formData.role === option.value
+                            ? 'border-primary bg-primary/5 text-primary'
+                            : 'border-border bg-card text-foreground hover:bg-muted/50',
+                        )}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
+                    <Users className="w-3 h-3" />
+                    Controls your initial business permissions
+                  </p>
+                </div>
+              </>
+            )}
 
             {/* Email (if not already set) */}
             {!existingEmail && (
@@ -173,7 +275,7 @@ export default function OnboardingProfile() {
               variant="hero"
               size="lg"
               className="w-full"
-              disabled={!isValid}
+            disabled={!isValid || (formData.accountType === 'business' && !formData.companyName.trim())}
             >
               Continue
               <ArrowRight className="w-5 h-5" />

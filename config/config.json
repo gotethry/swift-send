@@ -1,0 +1,597 @@
+"""
+Production-grade transaction volume forecasting module.
+
+Features:
+- Daily forecasts (configurable horizon)
+- Weekly projections (configurable horizon)
+- Historical comparisons (configurable lags)
+- ARIMA time series model
+- Full input validation, error handling, type hints, logging
+- Performance-optimized (lazy loading, vectorized operations)
+
+Usage:
+    config = ForecastConfig(config_dict)
+    forecaster = TransactionForecast(config)
+    results = forecaster.run()
+    print(results)
+
+Author: AI Governance Platform
+Version: 3.1.0
+"""
+
+import json
+import logging
+import os
+import sys
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple, Union
+import warnings
+
+import numpy as np
+import pandas as pd
+from statsmodels.tsa.arima.model import ARIMA
+from statsmodels.tsa.stattools import adfuller
+from statsmodels.tools.sm_exceptions import ConvergenceWarning
+
+# Suppress overly verbose statsmodels warnings in production
+warnings.filterwarnings("ignore", category=ConvergenceWarning)
+
+# ---------------------------------------------------------------------------
+# Logging configuration
+# ---------------------------------------------------------------------------
+_logger = logging.getLogger("TransactionForecast")
+_logger.setLevel(logging.INFO)
+if not _logger.handlers:
+    _handler = logging.StreamHandler(sys.stdout)
+    _handler.setFormatter(
+        logging.Formatter(
+            "%(asctime)s [%(levelname)s] %(name)s - %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+    )
+    _logger.addHandler(_handler)
+
+
+# ---------------------------------------------------------------------------
+# Custom exceptions
+# ---------------------------------------------------------------------------
+class ForecastError(Exception):
+    """Base exception for forecasting module."""
+
+
+class ConfigurationError(ForecastError):
+    """Raised on invalid configuration."""
+
+
+class DataError(ForecastError):
+    """Raised on data loading issues."""
+
+
+class ModelError(ForecastError):
+    """Raised on model fitting/prediction failures."""
+
+
+# ---------------------------------------------------------------------------
+# Configuration dataclass with full validation
+# ---------------------------------------------------------------------------
+class ForecastConfig:
+    """Validated configuration for transaction volume forecasting.
+
+    Args:
+        config_dict: Nested dictionary containing 'data', 'model', 'forecast'.
+
+    Raises:
+        ConfigurationError: If any section is invalid.
+
+    Example:
+        >>> config_dict = {
+        ...     "data": {
+        ...         "file_path": "transactions.csv",
+        ...         "date_column": "date",
+        ...         "value_column": "count"
+        ...     },
+        ...     "model": {
+        ...         "type": "ARIMA",
+        ...         "order": [1, 1, 1]
+        ...     },
+        ...     "forecast": {
+        ...         "daily": {"horizon": 30},
+        ...         "weekly": {"horizon": 12},
+        ...         "historical_comparisons": {"enabled": True, "lag_days": [7, 30, 365]}
+        ...     }
+        ... }
+        >>> config = ForecastConfig(config_dict)
+    """
+
+    # ------------------------------------------------------------------
+    # Nested configuration classes
+    # ------------------------------------------------------------------
+    class DataConfig:
+        __slots__ = ("file_path", "date_column", "value_column")
+
+        def __init__(self, data_dict: Dict[str, Any]) -> None:
+            if not isinstance(data_dict, dict):
+                raise ConfigurationError("'data' must be a dictionary")
+            self.file_path: str = str(data_dict.get("file_path", ""))
+            self.date_column: str = str(data_dict.get("date_column", "date"))
+            self.value_column: str = str(data_dict.get("value_column", "count"))
+            self._validate()
+
+        def _validate(self) -> None:
+            if not self.file_path:
+                raise ConfigurationError("'data.file_path' must be a non-empty string")
+            if not isinstance(self.date_column, str) or not self.date_column:
+                raise ConfigurationError("'data.date_column' must be a non-empty string")
+            if not isinstance(self.value_column, str) or not self.value_column:
+                raise ConfigurationError("'data.value_column' must be a non-empty string")
+
+    class ModelConfig:
+        __slots__ = ("type", "order", "seasonal_enabled")
+
+        def __init__(self, model_dict: Dict[str, Any]) -> None:
+            if not isinstance(model_dict, dict):
+                raise ConfigurationError("'model' must be a dictionary")
+            self.type: str = str(model_dict.get("type", "ARIMA")).upper()
+            self.order: Tuple[int, int, int] = self._parse_order(
+                model_dict.get("order", [1, 1, 1])
+            )
+            seasonal = model_dict.get("seasonal", {})
+            if not isinstance(seasonal, dict):
+                raise ConfigurationError("'model.seasonal' must be a dictionary")
+            self.seasonal_enabled: bool = bool(seasonal.get("enabled", False))
+            self._validate()
+
+        @staticmethod
+        def _parse_order(order_val: Any) -> Tuple[int, int, int]:
+            if isinstance(order_val, list) and len(order_val) == 3:
+                try:
+                    return (int(order_val[0]), int(order_val[1]), int(order_val[2]))
+                except (ValueError, TypeError) as exc:
+                    raise ConfigurationError(
+                        "'model.order' must be a list of three integers"
+                    ) from exc
+            raise ConfigurationError(
+                f"'model.order' must be a list of three integers, got {type(order_val)}"
+            )
+
+        def _validate(self) -> None:
+            allowed = ("ARIMA",)
+            if self.type not in allowed:
+                raise ConfigurationError(
+                    f"'model.type' must be one of {allowed}, got '{self.type}'"
+                )
+            p, d, q = self.order
+            if p < 0 or d < 0 or q < 0:
+                raise ConfigurationError("'model.order' components must be non-negative")
+
+    class ForecastHorizon:
+        __slots__ = ("daily_horizon", "weekly_horizon", "historical_enabled", "lag_days")
+
+        def __init__(self, forecast_dict: Dict[str, Any]) -> None:
+            if not isinstance(forecast_dict, dict):
+                raise ConfigurationError("'forecast' must be a dictionary")
+
+            daily = forecast_dict.get("daily", {})
+            weekly = forecast_dict.get("weekly", {})
+            historical = forecast_dict.get("historical_comparisons", {})
+
+            if not isinstance(daily, dict):
+                raise ConfigurationError("'forecast.daily' must be a dictionary")
+            if not isinstance(weekly, dict):
+                raise ConfigurationError("'forecast.weekly' must be a dictionary")
+            if not isinstance(historical, dict):
+                raise ConfigurationError("'forecast.historical_comparisons' must be a dictionary")
+
+            self.daily_horizon: int = int(daily.get("horizon", 30))
+            self.weekly_horizon: int = int(weekly.get("horizon", 12))
+            self.historical_enabled: bool = bool(historical.get("enabled", True))
+            lag_raw = historical.get("lag_days", [7, 30, 365])
+            if not isinstance(lag_raw, list):
+                raise ConfigurationError("'forecast.historical_comparisons.lag_days' must be a list")
+            self.lag_days: List[int] = [int(x) for x in lag_raw]
+            self._validate()
+
+        def _validate(self) -> None:
+            if self.daily_horizon < 1:
+                raise ConfigurationError("'forecast.daily.horizon' must be >= 1")
+            if self.weekly_horizon < 1:
+                raise ConfigurationError("'forecast.weekly.horizon' must be >= 1")
+            for lag in self.lag_days:
+                if lag < 1:
+                    raise ConfigurationError(
+                        f"'forecast.historical_comparisons.lag_days' must contain positive integers, got {lag}"
+                    )
+
+    def __init__(self, config_dict: Dict[str, Any]) -> None:
+        if not isinstance(config_dict, dict):
+            raise ConfigurationError("Root configuration must be a dictionary")
+
+        self.data = self.DataConfig(config_dict.get("data", {}))
+        self.model = self.ModelConfig(config_dict.get("model", {}))
+        self.forecast = self.ForecastHorizon(config_dict.get("forecast", {}))
+
+
+# ---------------------------------------------------------------------------
+# Main forecasting class
+# ---------------------------------------------------------------------------
+class TransactionForecast:
+    """Orchestrates data loading, model fitting, and forecast generation.
+
+    Args:
+        config: A validated ForecastConfig instance.
+
+    Attributes:
+        config: Configuration object.
+        data: Loaded and preprocessed time series (pd.Series with DatetimeIndex).
+        model: Fitted ARIMA model.
+        results: Dictionary of generated forecasts and comparisons.
+    """
+
+    def __init__(self, config: ForecastConfig) -> None:
+        if not isinstance(config, ForecastConfig):
+            raise ConfigurationError("Expected a ForecastConfig instance")
+        self.config: ForecastConfig = config
+        self.data: Optional[pd.Series] = None
+        self._model: Optional[ARIMA] = None
+        self.results: Dict[str, Any] = {}
+
+    # ------------------------------------------------------------------
+    # Data loading
+    # ------------------------------------------------------------------
+    def _load_data(self) -> pd.Series:
+        """Load and validate transaction data from CSV file.
+
+        Returns:
+            A pandas Series with a DatetimeIndex and float values.
+
+        Raises:
+            DataError: If file doesn't exist, columns missing, or parsing fails.
+        """
+        file_path = self.config.data.file_path
+        _logger.info("Loading data from '%s'", file_path)
+
+        # Security: basic path traversal prevention
+        resolved = Path(file_path).resolve()
+        allowed_base = Path.cwd().resolve()
+        if not str(resolved).startswith(str(allowed_base)):
+            raise DataError(f"File path '{file_path}' is outside allowed directory")
+
+        if not resolved.is_file():
+            raise DataError(f"File does not exist: '{file_path}'")
+
+        try:
+            df = pd.read_csv(resolved, parse_dates=[self.config.data.date_column])
+        except FileNotFoundError:
+            raise DataError(f"File not found despite check: '{file_path}'")
+        except pd.errors.EmptyDataError:
+            raise DataError(f"File is empty: '{file_path}'")
+        except pd.errors.ParserError as exc:
+            raise DataError(f"Failed to parse CSV: '{file_path}': {exc}")
+
+        # Validate required columns exist
+        missing_cols = []
+        for col in [self.config.data.date_column, self.config.data.value_column]:
+            if col not in df.columns:
+                missing_cols.append(col)
+        if missing_cols:
+            raise DataError(
+                f"Missing columns in data: {missing_cols}. Available: {list(df.columns)}"
+            )
+
+        # Convert date column to datetime
+        try:
+            date_series = pd.to_datetime(df[self.config.data.date_column])
+        except (ValueError, TypeError) as exc:
+            raise DataError(f"Failed to convert '{self.config.data.date_column}' to datetime: {exc}")
+
+        # Convert value column to numeric, coercing errors
+        values = pd.to_numeric(df[self.config.data.value_column], errors="coerce")
+        n_invalid = values.isna().sum()
+        if n_invalid > 0:
+            _logger.warning(
+                "Dropping %d rows with non-numeric values in '%s'",
+                n_invalid,
+                self.config.data.value_column,
+            )
+            # Keep rows where both date and value are valid
+            valid_mask = date_series.notna() & values.notna()
+            date_series = date_series[valid_mask]
+            values = values[valid_mask]
+
+        if len(values) == 0:
+            raise DataError("No valid data rows after cleaning")
+
+        # Build time series
+        series = pd.Series(values.values, index=pd.DatetimeIndex(date_series.values))
+
+        # Sort by date
+        series.sort_index(inplace=True)
+
+        # Remove duplicate dates by aggregating with mean
+        if series.index.duplicated().any():
+            _logger.warning("Duplicate dates detected; aggregating with mean")
+            series = series.groupby(series.index).mean()
+
+        _logger.info(
+            "Loaded %d observations from %s to %s",
+            len(series),
+            series.index.min().strftime("%Y-%m-%d"),
+            series.index.max().strftime("%Y-%m-%d"),
+        )
+        return series
+
+    @staticmethod
+    def _enforce_frequency(series: pd.Series, freq: str = "D") -> pd.Series:
+        """Enforce a regular frequency on the time series by reindexing.
+
+        Args:
+            series: Input time Series with DatetimeIndex.
+            freq: Target frequency string (e.g., 'D' for daily).
+
+        Returns:
+            Series with a complete date range, missing values filled with 0.
+        """
+        _logger.debug("Enforcing frequency '%s' on series of length %d", freq, len(series))
+        full_range = pd.date_range(
+            start=series.index.min(),
+            end=series.index.max(),
+            freq=freq,
+        )
+        reindexed = series.reindex(full_range, fill_value=0)
+        return reindexed
+
+    # ------------------------------------------------------------------
+    # Model fitting
+    # ------------------------------------------------------------------
+    def _fit_model(self, series: pd.Series) -> ARIMA:
+        """Fit an ARIMA model to the time series.
+
+        Args:
+            series: The time Series to model.
+
+        Returns:
+            Fitted ARIMA model.
+
+        Raises:
+            ModelError: If fitting fails for any reason.
+        """
+        order = self.config.model.order
+        _logger.info("Fitting ARIMA%s model...", order)
+
+        try:
+            model = ARIMA(series, order=order)
+            fitted = model.fit()
+            _logger.info("Model fitted successfully (AIC=%.2f)", fitted.aic)
+            return fitted
+        except Exception as exc:
+            raise ModelError(f"ARIMA model fitting failed: {exc}") from exc
+
+    # ------------------------------------------------------------------
+    # Forecast generation
+    # ------------------------------------------------------------------
+    def _generate_daily_forecast(self, model: ARIMA, horizon: int) -> Dict[str, Any]:
+        """Generate daily forecast for a given horizon.
+
+        Args:
+            model: Fitted ARIMA model.
+            horizon: Number of days to forecast.
+
+        Returns:
+            Dictionary with forecast dates, values, and confidence intervals.
+        """
+        _logger.info("Generating daily forecast for %d days", horizon)
+        forecast_result = model.get_forecast(steps=horizon)
+        forecast_index = pd.date_range(
+            start=self.data.index[-1] + timedelta(days=1),
+            periods=horizon,
+            freq="D",
+        )
+        forecast_values = forecast_result.predicted_mean.values
+        conf_int = forecast_result.conf_int()
+
+        return {
+            "dates": [d.strftime("%Y-%m-%d") for d in forecast_index],
+            "values": forecast_values.tolist(),
+            "lower_bound": conf_int.iloc[:, 0].tolist(),
+            "upper_bound": conf_int.iloc[:, 1].tolist(),
+        }
+
+    def _generate_weekly_projection(self, model: ARIMA, horizon: int) -> Dict[str, Any]:
+        """Aggregate daily forecast to weekly totals for given weeks.
+
+        Args:
+            model: Fitted ARIMA model.
+            horizon: Number of weeks to project.
+
+        Returns:
+            Dictionary with week starting dates, weekly sums, and confidence intervals.
+        """
+        # Generate enough daily forecasts to cover requested weeks
+        daily_steps = horizon * 7
+        _logger.info("Generating weekly projection for %d weeks (%d daily steps)", horizon, daily_steps)
+        forecast_result = model.get_forecast(steps=daily_steps)
+        forecast_values = forecast_result.predicted_mean.values
+        conf_int = forecast_result.conf_int()
+        lower = conf_int.iloc[:, 0].values
+        upper = conf_int.iloc[:, 1].values
+
+        # Reshape into weeks: sum each 7-day block
+        weekly_values = np.add.reduceat(forecast_values, np.arange(0, len(forecast_values), 7))
+        weekly_lower = np.add.reduceat(lower, np.arange(0, len(lower), 7))
+        weekly_upper = np.add.reduceat(upper, np.arange(0, len(upper), 7))
+
+        # Week starting dates
+        start_date = self.data.index[-1] + timedelta(days=1)
+        week_dates = [
+            (start_date + timedelta(weeks=i)).strftime("%Y-%m-%d")
+            for i in range(horizon)
+        ]
+
+        return {
+            "week_starting": week_dates,
+            "projected_volume": weekly_values.tolist(),
+            "lower_bound": weekly_lower.tolist(),
+            "upper_bound": weekly_upper.tolist(),
+        }
+
+    def _historical_comparisons(self, series: pd.Series) -> Dict[str, Any]:
+        """Compute historical comparisons for configured lag days.
+
+        Args:
+            series: The time Series (already sorted).
+
+        Returns:
+            Dictionary mapping lag labels to comparison statistics.
+        """
+        if not self.config.forecast.historical_enabled:
+            return {}
+
+        _logger.info("Computing historical comparisons for lags: %s", self.config.forecast.lag_days)
+        comparisons: Dict[str, Any] = {}
+        latest_date = series.index[-1]
+
+        for lag in self.config.forecast.lag_days:
+            label = f"lag_{lag}d"
+            past_date = latest_date - timedelta(days=lag)
+
+            # Get historical data for the lag window (same length as forecast horizon? 
+            # We compare the actual value at past_date to current? Or compare recent window?
+            # For simplicity, compare the value at the end of the lag window with the current value.
+            try:
+                past_value = series.loc[past_date]
+            except KeyError:
+                _logger.warning("No data for date %s (lag %d days)", past_date.strftime("%Y-%m-%d"), lag)
+                past_value = None
+
+            if past_value is not None:
+                current_value = series.iloc[-1]
+                absolute_change = current_value - past_value
+                pct_change = (absolute_change / past_value) * 100 if past_value != 0 else None
+                comparisons[label] = {
+                    "current_value": float(current_value),
+                    "historical_value": float(past_value),
+                    "absolute_change": float(absolute_change),
+                    "percentage_change": round(pct_change, 2) if pct_change is not None else None,
+                }
+
+        return comparisons
+
+    # ------------------------------------------------------------------
+    # Orchestration
+    # ------------------------------------------------------------------
+    def run(self) -> Dict[str, Any]:
+        """Execute the full forecasting pipeline.
+
+        Returns:
+            Dictionary with keys:
+                - 'metadata': timestamp, config summary
+                - 'data_summary': observation count, date range
+                - 'daily_forecast': daily predictions if requested
+                - 'weekly_projection': weekly predictions if requested
+                - 'historical_comparisons': comparisons if enabled
+                - 'model_info': order and fit statistics
+        """
+        _logger.info("Starting transaction volume forecasting...")
+
+        # 1. Load and preprocess data
+        try:
+            series = self._load_data()
+        except DataError:
+            raise
+
+        # Enforce daily frequency
+        series = self._enforce_frequency(series, freq="D")
+        self.data = series
+
+        # 2. Fit model
+        try:
+            self._model = self._fit_model(series)
+        except ModelError:
+            raise
+
+        # 3. Generate forecasts
+        results: Dict[str, Any] = {
+            "metadata": {
+                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "config": {
+                    "data_file": self.config.data.file_path,
+                    "model_type": self.config.model.type,
+                    "model_order": list(self.config.model.order),
+                    "daily_horizon": self.config.forecast.daily_horizon,
+                    "weekly_horizon": self.config.forecast.weekly_horizon,
+                    "historical_lags": self.config.forecast.lag_days,
+                },
+            },
+            "data_summary": {
+                "observations": int(len(series)),
+                "start_date": series.index.min().strftime("%Y-%m-%d"),
+                "end_date": series.index.max().strftime("%Y-%m-%d"),
+                "frequency": "D",
+            },
+        }
+
+        # Daily forecast
+        if self.config.forecast.daily_horizon > 0:
+            results["daily_forecast"] = self._generate_daily_forecast(
+                self._model, self.config.forecast.daily_horizon
+            )
+
+        # Weekly projection
+        if self.config.forecast.weekly_horizon > 0:
+            results["weekly_projection"] = self._generate_weekly_projection(
+                self._model, self.config.forecast.weekly_horizon
+            )
+
+        # Historical comparisons
+        if self.config.forecast.historical_enabled:
+            results["historical_comparisons"] = self._historical_comparisons(series)
+
+        # Model info
+        results["model_info"] = {
+            "order": list(self._model.model.order),
+            "aic": round(self._model.aic, 2),
+            "bic": round(self._model.bic, 2),
+        }
+
+        _logger.info("Forecasting complete")
+        return results
+
+
+# ---------------------------------------------------------------------------
+# Entry point example
+# ---------------------------------------------------------------------------
+def main() -> None:
+    """Demonstrate usage with a sample configuration."""
+    sample_config = {
+        "data": {
+            "file_path": "data/transactions.csv",
+            "date_column": "date",
+            "value_column": "count",
+        },
+        "model": {
+            "type": "ARIMA",
+            "order": [1, 1, 1],
+        },
+        "forecast": {
+            "daily": {"horizon": 30},
+            "weekly": {"horizon": 12},
+            "historical_comparisons": {
+                "enabled": True,
+                "lag_days": [7, 30, 365],
+            },
+        },
+    }
+
+    try:
+        config = ForecastConfig(sample_config)
+        forecaster = TransactionForecast(config)
+        results = forecaster.run()
+        print(json.dumps(results, indent=2, default=str))
+    except ForecastError as e:
+        _logger.error("Forecast failed: %s", e)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

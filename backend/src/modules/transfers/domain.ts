@@ -6,6 +6,7 @@ export type TransferState =
   | 'created'
   | 'awaiting_multisig'
   | 'validated'
+  | 'review_pending'
   | 'held'
   | 'submitted'
   | 'settled'

@@ -7,6 +7,148 @@ servers:
   - url: http://localhost:4000
 
 paths:
+  /health:
+    get:
+      summary: System health check
+      description: Checks overall system health including database and blockchain connectivity
+      operationId: healthCheck
+      responses:
+        '200':
+          description: System is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [ready, degraded]
+                  timestamp:
+                    type: string
+                    format: date-time
+                  environment:
+                    type: string
+                  stellar:
+                    type: object
+                    properties:
+                      network:
+                        type: string
+                      horizonUrl:
+                        type: string
+                      status:
+                        type: string
+                        enum: [online, offline]
+                      latencyMs:
+                        type: number
+                      checkedAt:
+                        type: string
+                        format: date-time
+                  database:
+                    type: object
+                    properties:
+                      url:
+                        type: string
+                      status:
+                        type: string
+                        enum: [online, offline]
+                      latencyMs:
+                        type: number
+                      checkedAt:
+                        type: string
+                        format: date-time
+                      details:
+                        type: string
+                  queues:
+                    type: object
+                    properties:
+                      settlementDelayMs:
+                        type: number
+                      maxAttempts:
+                        type: number
+        '503':
+          description: Service unavailable
+
+  /health/live:
+    get:
+      summary: Liveness probe
+      description: Simple liveness check that only verifies the service is running
+      operationId: livenessCheck
+      responses:
+        '200':
+          description: Service is alive
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [alive]
+                  timestamp:
+                    type: string
+                    format: date-time
+
+  /health/ready:
+    get:
+      summary: Readiness probe
+      description: Readiness check that verifies all dependencies are ready
+      operationId: readinessCheck
+      responses:
+        '200':
+          description: Service is ready
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [ready, degraded]
+                  timestamp:
+                    type: string
+                    format: date-time
+                  environment:
+                    type: string
+                  stellar:
+                    type: object
+                    properties:
+                      network:
+                        type: string
+                      horizonUrl:
+                        type: string
+                      status:
+                        type: string
+                        enum: [online, offline]
+                      latencyMs:
+                        type: number
+                      checkedAt:
+                        type: string
+                        format: date-time
+                  database:
+                    type: object
+                    properties:
+                      url:
+                        type: string
+                      status:
+                        type: string
+                        enum: [online, offline]
+                      latencyMs:
+                        type: number
+                      checkedAt:
+                        type: string
+                        format: date-time
+                      details:
+                        type: string
+                  queues:
+                    type: object
+                    properties:
+                      settlementDelayMs:
+                        type: number
+                      maxAttempts:
+                        type: number
+        '503':
+          description: Service not ready
+
   /transfers:
     post:
       summary: Create a transfer (idempotent)

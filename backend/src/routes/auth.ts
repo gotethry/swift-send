@@ -9,10 +9,13 @@ import {
   getSessionInfo,
   isMariaIdentifier,
   saveSession,
+  trustIp,
+  updateLastKnownIp,
 } from '../auth/sessionStore';
 import { authenticate } from '../middleware/authenticate';
 import { deleteCachedKey, getCachedJson, setCachedJson } from '../utils/redisCache';
 import { verifyRateLimiter, resendRateLimiter } from '../auth/rateLimiter';
+import { generateFingerprint } from '../auth/deviceFingerprint';
 
 interface LoginBody {
   identifier: string;
@@ -22,10 +25,23 @@ interface VerifyBody {
   code: string;
 }
 
+interface StepUpVerifyBody {
+  code: string;
+}
+
 interface OnboardingBody {
   name?: string;
   email?: string;
   phone?: string;
+  accountType?: 'personal' | 'business';
+  companyName?: string;
+  role?: 'owner' | 'finance_admin' | 'operator';
+  teamMembers?: Array<{
+    name: string;
+    email: string;
+    role: 'owner' | 'admin' | 'approver' | 'viewer';
+    status: 'active' | 'invited';
+  }>;
 }
 
 function sessionToAuthUser(session: { id: string; email?: string; phone?: string; verified: boolean; hasWallet: boolean; role?: 'admin' | 'user' }) {
@@ -84,11 +100,13 @@ export default async function authRoutes(fastify: FastifyInstance) {
       const session = createMariaSession();
       await setAuthCookie(reply, session);
 
+      const mariaFingerprint = generateFingerprint(request.headers, request.ip);
       fastify.container.services.authRiskEngine.recordAuthEvent({
         userId: session.id,
         type: 'login',
         ipAddress: request.ip,
         userAgent: request.headers['user-agent'],
+        fingerprint: mariaFingerprint,
         success: true,
         timestamp: new Date().toISOString(),
       });
@@ -105,16 +123,19 @@ export default async function authRoutes(fastify: FastifyInstance) {
     const session = createNewUserSession(isEmail ? identifier.toLowerCase() : undefined, isEmail ? undefined : identifier);
     await setAuthCookie(reply, session);
 
+    const fingerprint = generateFingerprint(request.headers, request.ip);
     const riskAssessment = fastify.container.services.authRiskEngine.assessRisk(
       session.id,
       request.ip,
       request.headers['user-agent'],
+      fingerprint,
     );
     fastify.container.services.authRiskEngine.recordAuthEvent({
       userId: session.id,
       type: 'login',
       ipAddress: request.ip,
       userAgent: request.headers['user-agent'],
+      fingerprint,
       success: true,
       timestamp: new Date().toISOString(),
     });
@@ -128,6 +149,7 @@ export default async function authRoutes(fastify: FastifyInstance) {
       riskAssessment: {
         level: riskAssessment.level,
         requiresStepUp: riskAssessment.requiresStepUp,
+        deviceUnknown: riskAssessment.factors.includes('Login from unrecognized device'),
         factors: riskAssessment.factors,
       },
     });
@@ -148,6 +170,7 @@ export default async function authRoutes(fastify: FastifyInstance) {
       type: 'login',
       ipAddress: request.ip,
       userAgent: request.headers['user-agent'],
+      fingerprint: generateFingerprint(request.headers, request.ip),
       success: true,
       timestamp: new Date().toISOString(),
     });
@@ -186,6 +209,7 @@ export default async function authRoutes(fastify: FastifyInstance) {
         type: 'verify_attempt',
         ipAddress: request.ip,
         userAgent: request.headers['user-agent'],
+        fingerprint: generateFingerprint(request.headers, request.ip),
         success: false,
         timestamp: new Date().toISOString(),
       });
@@ -205,6 +229,7 @@ export default async function authRoutes(fastify: FastifyInstance) {
       type: 'verify',
       ipAddress: request.ip,
       userAgent: request.headers['user-agent'],
+      fingerprint: generateFingerprint(request.headers, request.ip),
       success: true,
       timestamp: new Date().toISOString(),
     });
@@ -223,6 +248,81 @@ export default async function authRoutes(fastify: FastifyInstance) {
       session: getSessionInfo(session),
       user: session.user ?? null,
       onboardingRequired: session.verified && !session.onboardingCompleted && !session.user,
+    });
+  });
+
+  /**
+   * Step-up verification used for forced re-authentication when session anomaly is detected.
+   * For now, this reuses the same OTP-style code logic as /auth/verify.
+   */
+  fastify.post<{ Body: StepUpVerifyBody }>('/auth/step-up/verify', { preHandler: [authenticate] }, async (request, reply) => {
+    const code = request.body?.code?.trim();
+    if (!code) {
+      return reply.status(400).send({ error: 'code is required' });
+    }
+
+    const token = request.user as JwtSessionPayload;
+    const session = getSession(token.sub);
+    if (!session) {
+      clearAuthCookie(reply);
+      return reply.status(401).send({ error: 'Session expired' });
+    }
+
+    if (!session.verified) {
+      return reply.status(403).send({ error: 'Verification required' });
+    }
+
+    if (!isValidVerificationCode(code)) {
+      fastify.container.services.authRiskEngine.recordAuthEvent({
+        userId: session.id,
+        type: 'step_up',
+        ipAddress: request.ip,
+        userAgent: request.headers['user-agent'],
+        success: false,
+        timestamp: new Date().toISOString(),
+      });
+      return reply.status(400).send({ error: 'Invalid verification code' });
+    }
+
+    session.reauthRequired = false;
+    session.reauthReason = undefined;
+    session.reauthFactors = undefined;
+    session.reauthAssessedAt = undefined;
+
+    // Trust the current client context.
+    updateLastKnownIp(session.id, request.ip);
+    trustIp(session.id, request.ip);
+
+    saveSession(session);
+    await deleteCachedKey(`auth:me:${session.id}`);
+    await setAuthCookie(reply, session);
+
+    fastify.container.services.authRiskEngine.recordAuthEvent({
+      userId: session.id,
+      type: 'step_up',
+      ipAddress: request.ip,
+      userAgent: request.headers['user-agent'],
+      success: true,
+      timestamp: new Date().toISOString(),
+    });
+
+    try {
+      await fastify.container.services.notification.notifySecurityEvent({
+        userId: session.id,
+        kind: 'step_up_completed',
+        title: 'Verification complete',
+        message: 'You’re verified and can continue using your account.',
+        metadata: { ip: request.ip },
+      });
+    } catch {
+      // best-effort
+    }
+
+    return reply.send({
+      ok: true,
+      authUser: sessionToAuthUser(session),
+      session: getSessionInfo(session),
+      user: session.user ?? null,
     });
   });
 
@@ -327,6 +427,23 @@ export default async function authRoutes(fastify: FastifyInstance) {
     }
 
     const body = request.body || {};
+    const accountType = body.accountType === 'business' ? 'business' : 'personal';
+    const businessProfile = accountType === 'business'
+      ? {
+          companyName: body.companyName || `${body.name || session.user?.name || 'Business'} LLC`,
+          role: body.role || 'owner',
+          teamSize: body.teamMembers?.length || 1,
+          permissions: ['send_transfers', 'view_reports', 'manage_team'],
+          teamMembers: body.teamMembers || [
+            {
+              name: body.name || session.user?.name || 'User',
+              email: session.email || body.email || '',
+              role: 'owner',
+              status: 'active',
+            },
+          ],
+        }
+      : undefined;
     const newUser: PublicUser = {
       id: session.id,
       name: body.name || 'User',
@@ -340,6 +457,8 @@ export default async function authRoutes(fastify: FastifyInstance) {
       onboardingCompleted: true,
       walletAddress: `wallet_${session.id}`,
       wallets: [], // Initialize with empty wallets array
+      accountType,
+      businessProfile,
       createdAt: new Date().toISOString(),
     };
 
@@ -353,6 +472,62 @@ export default async function authRoutes(fastify: FastifyInstance) {
 
     return reply.send({
       user: newUser,
+      authUser: sessionToAuthUser(session),
+      session: getSessionInfo(session),
+    });
+  });
+
+  fastify.post<{
+    Body: {
+      companyName: string;
+      role: 'owner' | 'finance_admin' | 'operator';
+      teamMembers: Array<{
+        name: string;
+        email: string;
+        role: 'owner' | 'admin' | 'approver' | 'viewer';
+        status: 'active' | 'invited';
+      }>;
+    };
+  }>('/auth/business/profile', { preHandler: [authenticate] }, async (request, reply) => {
+    const token = request.user as JwtSessionPayload;
+    const session = getSession(token.sub);
+    if (!session || !session.user) {
+      clearAuthCookie(reply);
+      return reply.status(401).send({ error: 'Session expired' });
+    }
+
+    const body = request.body;
+    const companyName = body?.companyName?.trim();
+    if (!companyName) {
+      return reply.status(400).send({ error: 'companyName is required' });
+    }
+
+    const teamMembers = Array.isArray(body.teamMembers) && body.teamMembers.length > 0
+      ? body.teamMembers
+      : [
+          {
+            name: session.user.name,
+            email: session.user.email || '',
+            role: 'owner' as const,
+            status: 'active' as const,
+          },
+        ];
+
+    session.user.accountType = 'business';
+    session.user.businessProfile = {
+      companyName,
+      role: body.role || 'owner',
+      teamSize: teamMembers.length,
+      permissions: ['send_transfers', 'view_reports', 'manage_team'],
+      teamMembers,
+    };
+    saveSession(session);
+    await deleteCachedKey(`auth:me:${session.id}`);
+
+    await setAuthCookie(reply, session);
+
+    return reply.send({
+      user: session.user,
       authUser: sessionToAuthUser(session),
       session: getSessionInfo(session),
     });

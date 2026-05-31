@@ -4,6 +4,7 @@ import { createLogger } from '../../logger';
 import { EventBus } from '../../core/eventBus';
 import { ComplianceService } from '../compliance/complianceService';
 import { FraudService } from '../fraud/fraudService';
+import { FraudReviewService } from '../fraud/fraudReviewService';
 import { WalletService } from '../wallets/walletService';
 import { TransferRepository } from './repository';
 import { CreateTransferCommand, TransferRecord, TransferState } from './domain';
@@ -16,6 +17,7 @@ export class TransferLifecycle {
     private readonly compliance: ComplianceService,
     private readonly fraud: FraudService,
     private readonly eventBus: EventBus,
+    private readonly fraudReview?: FraudReviewService,
   ) {}
 
   async createTransfer(command: CreateTransferCommand) {
@@ -138,6 +140,18 @@ export class TransferLifecycle {
       },
     });
 
+    await this.eventBus.publish({
+      type: TransferEventType.EscrowCreated,
+      timestamp: new Date().toISOString(),
+      payload: {
+        userId: transfer.userId,
+        transferId: transfer.id,
+        amount: transfer.amount,
+        currency: transfer.currency,
+        recipientName: this.recipientName(transfer),
+      },
+    });
+
     transferLogger.info(
       {
         amount: transfer.amount,
@@ -148,6 +162,13 @@ export class TransferLifecycle {
     );
 
     if (fraudAssessment.flags.length > 0 || fraudAssessment.requiresReview) {
+      this.appendStatus(
+        transfer,
+        'review_pending',
+        `Requires manual review: ${fraudAssessment.level} risk`,
+      );
+      await this.repository.update(transfer);
+      this.fraudReview?.enqueueReview(transfer);
       await this.eventBus.publish({
         type: TransferEventType.Flagged,
         timestamp: new Date().toISOString(),
@@ -160,6 +181,7 @@ export class TransferLifecycle {
           recipientName: this.recipientName(transfer),
         },
       });
+      return transfer;
     }
 
     this.scheduleSettlement(transfer.id);
@@ -168,6 +190,68 @@ export class TransferLifecycle {
 
   async getTransfer(id: string) {
     return this.repository.findById(id);
+  }
+
+  async approveReview(transferId: string, reviewerId: string) {
+    const transfer = await this.repository.findById(transferId);
+    if (!transfer) {
+      throw new ValidationError('Transfer not found');
+    }
+    if (transfer.state !== 'review_pending') {
+      throw new ValidationError('Transfer is not pending review');
+    }
+
+    this.appendStatus(transfer, 'held', `Review approved by ${reviewerId}`);
+    await this.repository.update(transfer);
+    this.scheduleSettlement(transfer.id);
+    return transfer;
+  }
+
+  async rejectReview(transferId: string, reviewerId: string, reason?: string) {
+    const transfer = await this.repository.findById(transferId);
+    if (!transfer) {
+      throw new ValidationError('Transfer not found');
+    }
+    if (transfer.state !== 'review_pending') {
+      throw new ValidationError('Transfer is not pending review');
+    }
+
+    const failureReason = reason || 'Rejected by manual review';
+    try {
+      if (transfer.escrowId) {
+        await this.wallets.refundEscrow({
+          userId: transfer.userId,
+          transferId: transfer.id,
+          destinationAccount: transfer.fromWalletId,
+          amount: transfer.amount,
+          currency: transfer.currency,
+          metadata: { reason: 'fraud_review_rejection', reviewerId },
+        });
+      }
+    } catch (refundError: unknown) {
+      this.getLogger({ transferId }).error(
+        { error: refundError instanceof Error ? refundError.message : String(refundError) },
+        'refund after fraud rejection failed',
+      );
+    }
+
+    this.appendStatus(transfer, 'failed', `Review rejected by ${reviewerId}: ${failureReason}`);
+    transfer.lastError = failureReason;
+    await this.repository.update(transfer);
+    await this.eventBus.publish({
+      type: TransferEventType.Failed,
+      timestamp: new Date().toISOString(),
+      payload: {
+        userId: transfer.userId,
+        transferId: transfer.id,
+        amount: transfer.amount,
+        currency: transfer.currency,
+        recipientName: this.recipientName(transfer),
+        error: failureReason,
+      },
+    });
+
+    return transfer;
   }
 
   async simulateTransfer(command: CreateTransferCommand) {
@@ -415,8 +499,9 @@ export class TransferLifecycle {
       return;
     }
 
-    if (this.shouldRollbackIncompleteFlow(transfer)) {
-      await this.rollbackIncompleteFlow(transfer, 'stale_incomplete_flow');
+    const rollbackReason = this.detectIncompleteFlow(transfer);
+    if (rollbackReason) {
+      await this.triggerRollbackSafeguard(transfer, rollbackReason, transferLogger);
       return;
     }
 
@@ -466,27 +551,11 @@ export class TransferLifecycle {
       );
 
       if (transfer.processingAttempts >= config.queues.maxSettlementAttempts) {
-        await this.wallets.refundEscrow({
-          userId: transfer.userId,
-          transferId: transfer.id,
-          destinationAccount: transfer.fromWalletId,
-          amount: transfer.amount,
-          currency: transfer.currency,
-          metadata: { reason: 'auto_refund' },
-        });
-        this.appendStatus(transfer, 'failed', transfer.lastError);
-        await this.eventBus.publish({
-          type: TransferEventType.Failed,
-          timestamp: new Date().toISOString(),
-          payload: {
-            userId: transfer.userId,
-            transferId: transfer.id,
-            amount: transfer.amount,
-            currency: transfer.currency,
-            recipientName: this.recipientName(transfer),
-            error: transfer.lastError,
-          },
-        });
+        await this.triggerRollbackSafeguard(
+          transfer,
+          `max settlement attempts reached: ${transfer.lastError}`,
+          transferLogger,
+        );
       } else {
         this.scheduleSettlement(transfer.id);
       }
@@ -576,6 +645,57 @@ export class TransferLifecycle {
       return externalTxHash;
     }
     return `sim_${transfer.id}_${Date.now().toString(16)}`;
+  }
+
+  private detectIncompleteFlow(transfer: TransferRecord): string | null {
+    if (transfer.state === 'held' && !transfer.escrowId) {
+      return 'missing escrow id while transfer is held';
+    }
+    if (transfer.state === 'submitted' && !transfer.transactionHash && transfer.processingAttempts > 0) {
+      return 'submitted transfer missing transaction hash after prior attempts';
+    }
+    return null;
+  }
+
+  private async triggerRollbackSafeguard(
+    transfer: TransferRecord,
+    reason: string,
+    logger: ReturnType<typeof createLogger>,
+  ) {
+    const note = `rollback safeguard: ${reason}`;
+    try {
+      await this.wallets.refundEscrow({
+        userId: transfer.userId,
+        transferId: transfer.id,
+        destinationAccount: transfer.fromWalletId,
+        amount: transfer.amount,
+        currency: transfer.currency,
+        metadata: { reason: 'rollback_safeguard', trigger: reason },
+      });
+      logger.warn({ transferId: transfer.id, reason }, 'rollback safeguard executed');
+    } catch (refundErr: unknown) {
+      logger.error(
+        { transferId: transfer.id, reason, error: refundErr instanceof Error ? refundErr.message : String(refundErr) },
+        'rollback safeguard refund failed',
+      );
+    }
+
+    this.appendStatus(transfer, 'failed', note);
+    transfer.lastError = note;
+    await this.repository.update(transfer);
+    await this.eventBus.publish({
+      type: TransferEventType.Failed,
+      timestamp: new Date().toISOString(),
+      payload: {
+        userId: transfer.userId,
+        transferId: transfer.id,
+        amount: transfer.amount,
+        currency: transfer.currency,
+        recipientName: this.recipientName(transfer),
+        error: note,
+      },
+    });
+    logger.info({ transferId: transfer.id }, 'reconciliation event recorded for rollback safeguard');
   }
 }
 

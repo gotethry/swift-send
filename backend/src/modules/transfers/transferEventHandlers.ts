@@ -5,6 +5,7 @@ import { FraudService } from '../fraud/fraudService';
 import { NotificationService } from '../notifications/notificationService';
 import {
   TransferEventType,
+  type TransferCreatedEventPayload,
   type TransferFailedEventPayload,
   type TransferFlaggedEventPayload,
   type TransferStateChangedEventPayload,
@@ -69,6 +70,17 @@ export function registerTransferEventHandlers(deps: TransferEventHandlers) {
           transferId: event.payload.transferId,
           score: event.payload.assessment.score,
           flags: event.payload.assessment.flags.map((flag) => flag.label),
+        });
+      },
+    ),
+    deps.eventBus.subscribe<TransferCreatedEventPayload>(
+      TransferEventType.EscrowCreated,
+      async (event) => {
+        await deps.notifications.notifyEscrowCreated({
+          userId: event.payload.userId,
+          transferId: event.payload.transferId,
+          amount: event.payload.amount,
+          currency: event.payload.currency,
         });
       },
     ),

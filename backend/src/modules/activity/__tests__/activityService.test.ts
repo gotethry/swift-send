@@ -30,6 +30,16 @@ describe('ActivityService Redis caching', () => {
   const repository = {
     listRecentByUserId: jest.fn().mockResolvedValue([sampleRecord]),
     listByUserId: jest.fn().mockResolvedValue([sampleRecord]),
+    searchByUserId: jest.fn().mockResolvedValue({
+      records: [sampleRecord],
+      total: 1,
+      benchmark: {
+        scanned: 1,
+        matched: 1,
+        elapsedMs: 0,
+        indexUsed: true,
+      },
+    }),
   };
   const notifications = { listByUserId: jest.fn().mockResolvedValue([]) } as any;
   const exporter = { generateTransactionExcel: jest.fn().mockResolvedValue(Buffer.from('')) } as any;
@@ -66,5 +76,22 @@ describe('ActivityService Redis caching', () => {
 
     expect(deleteCachedKeys).toHaveBeenCalledWith('activity:transactions:user-1:*');
     expect(deleteCachedKeys).toHaveBeenCalledWith('activity:insights:user-1');
+  });
+
+  it('uses the repository search index and returns benchmark data', async () => {
+    const result = await service.searchTransactions('user-1', {
+      q: 'alice',
+      status: 'completed',
+      limit: 20,
+    });
+
+    expect(repository.searchByUserId).toHaveBeenCalledWith('user-1', {
+      q: 'alice',
+      status: 'completed',
+      limit: 20,
+    });
+    expect(result.items[0].recipientName).toBe('Alice');
+    expect(result.total).toBe(1);
+    expect(result.benchmark.indexUsed).toBe(true);
   });
 });

@@ -88,6 +88,15 @@ export async function apiFetch(path: string, init?: RequestInit): Promise<Respon
   if (init?.body !== undefined && typeof init.body === 'string' && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
+  // Allow client-side bandwidth mode to hint backend payload shaping.
+  try {
+    const bw = document.documentElement.dataset.bandwidth;
+    if (bw === 'low') {
+      headers.set('X-Low-Bandwidth', '1');
+    }
+  } catch {
+    // ignore
+  }
 
   let lastError: unknown;
   for (let attempt = 1; attempt <= API_MAX_ATTEMPTS; attempt += 1) {
@@ -106,6 +115,18 @@ export async function apiFetch(path: string, init?: RequestInit): Promise<Respon
 
       if (response.status === 401 && typeof window !== 'undefined') {
         window.dispatchEvent(new Event('swiftsend:unauthorized'));
+      }
+      if (response.status === 403 && typeof window !== 'undefined') {
+        // Best-effort inspection of the error payload to detect re-auth requirement
+        try {
+          const clone = response.clone();
+          const body = (await clone.json().catch(() => null)) as { code?: string } | null;
+          if (body?.code === 'reauth_required') {
+            window.dispatchEvent(new Event('swiftsend:reauth_required'));
+          }
+        } catch {
+          // ignore
+        }
       }
 
       if (!response.ok && shouldRetryResponse(response)) {

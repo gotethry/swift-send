@@ -175,3 +175,36 @@ export function validateConfig() {
 }
 
 export const isProd = () => config.env === 'production';
+
+// Additional security-related configuration exported separately so we don't modify the main config shape in-place.
+export const webhookConfig = {
+  sharedSecret: process.env.WEBHOOK_SHARED_SECRET || '',
+  timestampWindowSeconds: Number(process.env.WEBHOOK_TIMESTAMP_WINDOW_SECONDS || 300),
+  // WEBHOOK_ENDPOINTS is a comma-separated list of entries in the form: name|url|secret
+  // Example: payments|https://example.com/webhook|s3cr3t,ops|https://ops.example.com/hook|othersecret
+  endpoints: (process.env.WEBHOOK_ENDPOINTS || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((entry) => {
+      const parts = entry.split('|').map((p) => p.trim());
+      return {
+        name: parts[0] || parts[1] || 'default',
+        url: parts[1] || parts[0],
+        secret: parts[2] || process.env.WEBHOOK_SHARED_SECRET || '',
+      };
+    }),
+};
+
+export const receiptConfig = {
+  receiptSecret: process.env.RECEIPT_SECRET || config.encryption.key || '',
+  tokenExpirySeconds: Number(process.env.RECEIPT_TOKEN_EXPIRY_SECONDS || 60 * 60 * 24),
+};
+
+export const retryConfig = {
+  baseDelayMs: Number(process.env.RETRY_BASE_DELAY_MS || 500),
+  maxDelayMs: Number(process.env.RETRY_MAX_DELAY_MS || 30_000),
+  maxRetries: Number(process.env.RETRY_MAX_RETRIES || 5),
+  timeoutMs: Number(process.env.RETRY_OPERATION_TIMEOUT_MS || 20_000),
+};
+

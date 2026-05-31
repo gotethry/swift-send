@@ -5,6 +5,7 @@ import { ExportService } from "./modules/activity/exportService";
 import { ComplianceService } from "./modules/compliance/complianceService";
 import { CountryMetadataService } from "./modules/countries/countryMetadataService";
 import { FraudService } from "./modules/fraud/fraudService";
+import { FraudReviewService } from "./modules/fraud/fraudReviewService";
 import { createDemoNotifications } from "./modules/notifications/demoNotifications";
 import { NotificationService } from "./modules/notifications/notificationService";
 import { AccessGuardService } from "./modules/rbac/accessGuardService";
@@ -19,6 +20,7 @@ import { RecurringPaymentService } from "./modules/recurring-payments/recurringP
 import { RecurringPaymentWorker } from "./modules/recurring-payments/recurringPaymentWorker";
 import { InMemoryRecurringPaymentRepository } from "./modules/recurring-payments/inMemoryRecurringPaymentRepository";
 import { ComplianceLogService } from "./modules/compliance/complianceLogService";
+import { ComplianceViolationAlertService } from "./modules/compliance/complianceViolationAlertService";
 import { AuditStorageService } from "./modules/compliance/auditStorageService";
 import { ReconciliationService } from "./modules/reconciliation/reconciliationService";
 import { StressTestService } from "./modules/stress/stressTestService";
@@ -31,6 +33,18 @@ import { AuthRiskEngine } from "./auth/riskEngine";
 import { SettlementAnalyticsService } from "./modules/transfers/settlementAnalyticsService";
 import { AdminAlertService } from "./modules/system/adminAlertService";
 import { OperationalMetricsService } from "./modules/system/operationalMetricsService";
+import { TransactionApprovalService } from "./modules/approvals/approvalService";
+import { SuccessRateService } from "./modules/transfers/successRateService";
+import { RegionalFeeService } from "./modules/fees/regionalFeeService";
+import { securityEventsService } from "./modules/securityEvents/securityEventsService";
+import { receiptService } from "./modules/receipts/receiptService";
+import { WebhookDispatcher } from "./modules/webhooks/webhookDispatcher";
+import { WebhookService } from "./modules/webhooks/webhookService";
+import { AdminAuditService } from "./modules/admin/adminAuditService";
+import { RequestTraceService } from "./modules/traces/requestTraceService";
+import { VerificationService } from "./modules/verification/verificationService";
+import { CashFlowAnalyticsService } from "./modules/analytics/cashFlowAnalyticsService";
+import { ApprovalThresholdService } from "./modules/approvals/approvalThresholdService";
 
 export interface AppContainer {
   config: AppConfig;
@@ -42,7 +56,9 @@ export interface AppContainer {
     countryMetadata: CountryMetadataService;
     compliance: ComplianceService;
     complianceLog: ComplianceLogService;
+    complianceViolations: ComplianceViolationAlertService;
     fraud: FraudService;
+    fraudReview: FraudReviewService;
     notifications: NotificationService;
     notification: NotificationService;
     activity: ActivityService;
@@ -54,7 +70,27 @@ export interface AppContainer {
     stellarFee: StellarFeeService;
     adminAlerts: AdminAlertService;
     operationalMetrics: OperationalMetricsService;
-
+    auditStorage: AuditStorageService;
+    reconciliation: ReconciliationService;
+    stressTest: StressTestService;
+    authRiskEngine: AuthRiskEngine;
+    deadLetterQueue: DeadLetterQueue;
+    settlementAnalytics: SettlementAnalyticsService;
+    stellarMonitor: StellarMonitorService;
+    transactionApproval: TransactionApprovalService;
+    successRate: SuccessRateService;
+    regionalFee: RegionalFeeService;
+    securityEvents: typeof securityEventsService;
+    receipts: typeof receiptService;
+    webhookDispatcher: WebhookDispatcher;
+    reconciliation: ReconciliationService;
+    stressTest: StressTestService;
+    webhooks: WebhookService;
+    adminAudit: AdminAuditService;
+    requestTrace: RequestTraceService;
+    verification: VerificationService;
+    cashFlowAnalytics: CashFlowAnalyticsService;
+    approvalThreshold: ApprovalThresholdService;
   };
 }
 
@@ -63,7 +99,7 @@ export function createContainer(): AppContainer {
   const compliance = new ComplianceService();
   const fraud = new FraudService();
   const wallets = new WalletService();
-  const contracts = new ContractService();
+  const contracts = new ContractService(eventBus);
   const countryMetadata = new CountryMetadataService();
   const transferRepository = new InMemoryTransferRepository(
     createDemoTransfers(),
@@ -78,12 +114,14 @@ export function createContainer(): AppContainer {
     notifications,
     exporter,
   );
+  const fraudReview = new FraudReviewService();
   const transfers = new TransferLifecycle(
     transferRepository,
     wallets,
     compliance,
     fraud,
     eventBus,
+    fraudReview,
   );
   const deadLetterQueue = new DeadLetterQueue(eventBus);
   const transferQueue = new TransferQueue(transfers, eventBus, deadLetterQueue);
@@ -105,7 +143,25 @@ export function createContainer(): AppContainer {
   const authRiskEngine = new AuthRiskEngine(eventBus);
   const settlementAnalytics = new SettlementAnalyticsService(eventBus);
   const adminAlerts = new AdminAlertService(eventBus);
+  const complianceViolations = new ComplianceViolationAlertService(
+    eventBus,
+    complianceLog,
+    adminAlerts,
+    contracts.complianceLimits,
+  );
   const operationalMetrics = new OperationalMetricsService();
+  const transactionApproval = new TransactionApprovalService();
+  const successRate = new SuccessRateService();
+  const regionalFee = new RegionalFeeService();
+  const securityEvents = securityEventsService;
+  const receipts = receiptService;
+  const webhookDispatcher = new WebhookDispatcher(eventBus);
+  const webhooks = new WebhookService(eventBus);
+  const adminAudit = new AdminAuditService();
+  const requestTrace = new RequestTraceService();
+  const verification = new VerificationService();
+  const cashFlowAnalytics = new CashFlowAnalyticsService();
+  const approvalThreshold = new ApprovalThresholdService();
 
   recurringWorker.start();
   stellarMonitor.start();
@@ -147,7 +203,9 @@ export function createContainer(): AppContainer {
       countryMetadata,
       compliance,
       complianceLog,
+      complianceViolations,
       fraud,
+      fraudReview,
       notifications,
       notification: notifications,
       activity,
@@ -159,7 +217,27 @@ export function createContainer(): AppContainer {
       stellarFee,
       adminAlerts,
       operationalMetrics,
-
+      auditStorage,
+      reconciliation,
+      stressTest,
+      authRiskEngine,
+      deadLetterQueue,
+      settlementAnalytics,
+      stellarMonitor,
+      transactionApproval,
+      successRate,
+      regionalFee,
+      securityEvents,
+      receipts,
+      webhookDispatcher,
+      reconciliation,
+      stressTest,
+      webhooks,
+      adminAudit,
+      requestTrace,
+      verification,
+      cashFlowAnalytics,
+      approvalThreshold,
     },
   };
 }

@@ -53,7 +53,12 @@ export class WalletService {
         'reserve',
         request.metadata
       );
-      const escrow = await createEscrow(request.transferId, request.amount, request.currency);
+      const escrow = await createEscrow(
+        request.transferId,
+        request.amount,
+        request.currency,
+        request.userId,
+      );
       logger.debug({ transferId: request.transferId }, 'funds reserved');
       return escrow;
     } catch (error) {

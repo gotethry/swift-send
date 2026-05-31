@@ -36,12 +36,26 @@ interface TransactionsResponseDto {
 
 interface SpendingInsightsDto {
   summary: SpendingInsights['summary'];
+  weeklyTransferData: Array<{
+    week: string;
+    sent: number;
+    successful: number;
+    failed: number;
+    count: number;
+  }>;
   monthlyTransferData: Array<{
     month: string;
     sent: number;
     successful: number;
     failed: number;
     count: number;
+  }>;
+  recipientTrends: Array<{
+    recipientName: string;
+    amount: number;
+    count: number;
+    averageAmount: number;
+    lastTransferAt: string;
   }>;
   categoryData: SpendingInsights['categoryData'];
   topExpenses: Array<{
@@ -117,6 +131,12 @@ export interface TransactionSearchParams {
 export interface TransactionSearchResult {
   items: Transaction[];
   total: number;
+  benchmark?: {
+    scanned: number;
+    matched: number;
+    elapsedMs: number;
+    indexUsed: boolean;
+  };
 }
 
 export async function searchTransactions(
@@ -133,13 +153,18 @@ export async function searchTransactions(
   if (params.offset !== undefined) qs.set('offset', String(params.offset));
 
   const response = await apiFetch(`/activity/transactions/search?${qs}`);
-  const body = await requireJson<{ items: TransactionsResponseDto['items']; total: number }>(
+  const body = await requireJson<{
+    items: TransactionsResponseDto['items'];
+    total: number;
+    benchmark?: TransactionSearchResult['benchmark'];
+  }>(
     response,
     'Could not search transactions',
   );
   return {
     items: body.items.map(parseTransactionDto),
     total: body.total,
+    benchmark: body.benchmark,
   };
 }
 
@@ -164,7 +189,12 @@ export async function fetchSpendingInsights(): Promise<SpendingInsights> {
   const body = await requireJson<SpendingInsightsDto>(response, 'Could not load spending insights');
   return {
     summary: body.summary,
+    weeklyTransferData: body.weeklyTransferData,
     monthlyTransferData: body.monthlyTransferData,
+    recipientTrends: body.recipientTrends.map((trend) => ({
+      ...trend,
+      lastTransferAt: new Date(trend.lastTransferAt),
+    })),
     categoryData: body.categoryData,
     topExpenses: body.topExpenses.map((expense) => ({
       ...expense,

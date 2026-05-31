@@ -27,6 +27,7 @@ export interface UserNotification {
   createdAt: string;
   readAt?: string;
   transferId?: string;
+  actionUrl?: string;
   metadata?: Record<string, unknown>;
   deliveries: NotificationDelivery[];
 }
@@ -165,6 +166,145 @@ export class NotificationService {
     });
   }
 
+  async notifyEscrowCreated(payload: {
+    userId: string;
+    transferId: string;
+    amount: number;
+    currency: string;
+    expectedReleaseAt?: string;
+  }) {
+    return this.createForUser(payload.userId, {
+      transferId: payload.transferId,
+      type: 'info',
+      title: 'Escrow created',
+      message: `$${payload.amount.toFixed(2)} ${payload.currency} held in escrow for transfer ${payload.transferId.slice(0, 8)}.${payload.expectedReleaseAt ? ` Expected release: ${new Date(payload.expectedReleaseAt).toLocaleDateString()}.` : ''}`,
+      metadata: {
+        kind: 'escrow_created',
+        amount: payload.amount,
+        currency: payload.currency,
+        expectedReleaseAt: payload.expectedReleaseAt,
+      },
+    });
+  }
+
+  async notifyEscrowReleased(payload: {
+    userId: string;
+    transferId: string;
+    amount: number;
+    currency: string;
+    destinationAccount?: string;
+  }) {
+    return this.createForUser(payload.userId, {
+      transferId: payload.transferId,
+      type: 'success',
+      title: 'Escrow released',
+      message: `$${payload.amount.toFixed(2)} ${payload.currency} has been released from escrow and sent to the recipient.`,
+      metadata: {
+        kind: 'escrow_released',
+        amount: payload.amount,
+        currency: payload.currency,
+      },
+    });
+  }
+
+  async notifyEscrowRefunded(payload: {
+    userId: string;
+    transferId: string;
+    amount: number;
+    currency: string;
+    reason?: string;
+  }) {
+    return this.createForUser(payload.userId, {
+      transferId: payload.transferId,
+      type: 'warning',
+      title: 'Escrow refunded',
+      message: `$${payload.amount.toFixed(2)} ${payload.currency} has been refunded from escrow.${payload.reason ? ` Reason: ${payload.reason}` : ''}`,
+      metadata: {
+        kind: 'escrow_refunded',
+        amount: payload.amount,
+        currency: payload.currency,
+        reason: payload.reason,
+      },
+    });
+  }
+
+  async notifyEscrowDisputed(payload: {
+    userId: string;
+    transferId: string;
+    amount: number;
+    currency: string;
+    reason?: string;
+  }) {
+    return this.createForUser(payload.userId, {
+      transferId: payload.transferId,
+      type: 'error',
+      title: 'Escrow disputed',
+      message: `A dispute has been opened for escrow holding $${payload.amount.toFixed(2)} ${payload.currency}.${payload.reason ? ` Reason: ${payload.reason}` : ''} Funds are frozen pending resolution.`,
+      metadata: {
+        kind: 'escrow_disputed',
+        amount: payload.amount,
+        currency: payload.currency,
+        reason: payload.reason,
+      },
+    });
+  }
+
+  async notifyEscrowDelayed(payload: {
+    userId: string;
+    transferId: string;
+    amount: number;
+    currency: string;
+    delayReason?: string;
+  }) {
+    return this.createForUser(payload.userId, {
+      transferId: payload.transferId,
+      type: 'warning',
+      title: 'Escrow release delayed',
+      message: `The release of $${payload.amount.toFixed(2)} ${payload.currency} from escrow has been delayed.${payload.delayReason ? ` Reason: ${payload.delayReason}` : ' We are working to resolve this.'}`,
+      metadata: {
+        kind: 'escrow_delayed',
+        amount: payload.amount,
+        currency: payload.currency,
+        delayReason: payload.delayReason,
+      },
+    });
+  }
+
+  async notifyEscrowExpired(payload: {
+    userId: string;
+    transferId: string;
+    amount: number;
+    currency: string;
+  }) {
+    return this.createForUser(payload.userId, {
+      transferId: payload.transferId,
+      type: 'warning',
+      title: 'Escrow expired',
+      message: `Escrow for transfer ${payload.transferId.slice(0, 8)} expired before settlement. Funds were returned to the sender wallet.`,
+      actionUrl: `/admin/operations?tab=escrow&transferId=${encodeURIComponent(payload.transferId)}`,
+      metadata: {
+        kind: 'escrow_expired',
+        amount: payload.amount,
+        currency: payload.currency,
+      },
+    });
+  }
+
+  async notifySecurityEvent(payload: {
+    userId: string;
+    kind: 'reauth_required' | 'access_blocked' | 'step_up_completed';
+    title: string;
+    message: string;
+    metadata?: Record<string, unknown>;
+  }) {
+    return this.createForUser(payload.userId, {
+      type: payload.kind === 'step_up_completed' ? 'success' : payload.kind === 'access_blocked' ? 'error' : 'warning',
+      title: payload.title,
+      message: payload.message,
+      metadata: { kind: payload.kind, ...(payload.metadata ?? {}) },
+    });
+  }
+
   private async createForUser(
     userId: string,
     input: {
@@ -172,6 +312,7 @@ export class NotificationService {
       title: string;
       message: string;
       transferId?: string;
+      actionUrl?: string;
       metadata?: Record<string, unknown>;
     },
   ) {
@@ -184,6 +325,7 @@ export class NotificationService {
       message: input.message,
       createdAt,
       transferId: input.transferId,
+      actionUrl: this.resolveActionUrl(input),
       metadata: input.metadata,
       deliveries: this.buildDeliveries(userId, createdAt),
     };
@@ -216,6 +358,7 @@ export class NotificationService {
         type: String(notification.metadata?.kind || notification.type),
         transferId: notification.transferId || '',
         notificationId: notification.id,
+        actionUrl: notification.actionUrl || '',
       };
 
       const result = await sendMulticastPushNotification(
@@ -278,6 +421,37 @@ export class NotificationService {
     return items.sort(
       (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
     );
+  }
+
+  private resolveActionUrl(input: {
+    transferId?: string;
+    actionUrl?: string;
+    metadata?: Record<string, unknown>;
+  }) {
+    if (input.actionUrl) {
+      return input.actionUrl;
+    }
+
+    const kind = input.metadata?.kind;
+    const transferId = input.transferId;
+
+    if (transferId && kind === 'transfer_settled') {
+      return `/history?transferId=${encodeURIComponent(transferId)}`;
+    }
+
+    if (transferId && kind === 'transfer_failed') {
+      return `/history?transferId=${encodeURIComponent(transferId)}`;
+    }
+
+    if (transferId && String(kind || '').startsWith('escrow_')) {
+      return `/admin/operations?tab=escrow&transferId=${encodeURIComponent(transferId)}`;
+    }
+
+    if (transferId && kind === 'fraud_flagged') {
+      return `/admin/operations?tab=aml&transferId=${encodeURIComponent(transferId)}`;
+    }
+
+    return undefined;
   }
 
   /**

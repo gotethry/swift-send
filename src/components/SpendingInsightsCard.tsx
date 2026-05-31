@@ -1,6 +1,8 @@
+import { useNavigate } from 'react-router-dom';
 import { BarChart3, TrendingUp, ShieldAlert, Target } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import type { SpendingInsights } from '@/types/activity';
 
 interface SpendingInsightsCardProps {
@@ -9,6 +11,8 @@ interface SpendingInsightsCardProps {
 }
 
 export function SpendingInsightsCard({ insights, isLoading = false }: SpendingInsightsCardProps) {
+  const navigate = useNavigate();
+
   return (
     <Card className="border-border/60">
       <CardHeader className="pb-3">
@@ -17,7 +21,12 @@ export function SpendingInsightsCard({ insights, isLoading = false }: SpendingIn
             <BarChart3 className="w-4 h-4 text-primary" />
             Spending Insights
           </CardTitle>
-          {insights?.topCategory && <Badge variant="secondary">{insights.topCategory}</Badge>}
+          <div className="flex items-center gap-2">
+            {insights?.topCategory && <Badge variant="secondary">{insights.topCategory}</Badge>}
+            <Button variant="ghost" size="sm" className="h-8 px-2 text-xs" onClick={() => navigate('/insights')}>
+              More
+            </Button>
+          </div>
         </div>
       </CardHeader>
       <CardContent>

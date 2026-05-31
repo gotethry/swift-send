@@ -1,4 +1,4 @@
-import { Shield, AlertTriangle, Activity, BarChart3, Server, FileWarning, Bell, Gauge } from "lucide-react";
+import { Shield, AlertTriangle, Activity, BarChart3, Server, FileWarning, Bell, Gauge, FileText, TrendingUp, Route, Search, UserCheck, DollarSign } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Link } from "react-router-dom";
 
@@ -32,6 +32,13 @@ const adminCards = [
     color: "text-purple-500",
   },
   {
+    title: "Revenue Forecasting",
+    description: "Forecast revenue trends and compare historical fee performance",
+    icon: TrendingUp,
+    href: "/admin/revenue-forecasting",
+    color: "text-emerald-500",
+  },
+  {
     title: "Settlement Analytics",
     description: "Track settlement efficiency and failure rates",
     icon: BarChart3,
@@ -51,6 +58,48 @@ const adminCards = [
     icon: Gauge,
     href: "/admin/metrics",
     color: "text-blue-500",
+  },
+  {
+    title: "API Rate Usage",
+    description: "Track request volume and limiter lockouts across the platform",
+    icon: Route,
+    href: "/admin/api-usage",
+    color: "text-indigo-500",
+  },
+  {
+    title: "Regulatory Reports",
+    description: "Generate compliance and transaction summary exports",
+    icon: FileText,
+    href: "/admin/reports",
+    color: "text-green-500",
+  },
+  {
+    title: "API Trace Viewer",
+    description: "Inspect API request traces, correlation IDs, and errors",
+    icon: Search,
+    href: "/admin/traces",
+    color: "text-cyan-500",
+  },
+  {
+    title: "Recipient Verification",
+    description: "Manage recipient badges, verification, and trust scores",
+    icon: UserCheck,
+    href: "/admin/verifications",
+    color: "text-pink-500",
+  },
+  {
+    title: "Threshold Rules",
+    description: "Configure approval thresholds and rule management",
+    icon: Shield,
+    href: "/admin/thresholds",
+    color: "text-amber-500",
+  },
+  {
+    title: "Operations Workspace",
+    description: "Review AML cases, escrow expiry, country risk, and notification routing",
+    icon: FileText,
+    href: "/admin/operations",
+    color: "text-slate-600",
   },
 ];
 

@@ -13,12 +13,25 @@ import recurringPaymentRoutes from "./routes/recurringPayments";
 import contractRoutes from "./routes/contracts";
 import refundsRoutes from "./routes/refunds";
 import notificationRoutes from "./routes/notifications";
+import receiptRoutes from "./routes/receipts";
+import securityEventsRoutes from "./routes/securityEvents";
+
 import complianceRoutes from "./routes/compliance";
 import errorRoutes from "./routes/errors";
 import feeRoutes from "./routes/fees";
 import reconciliationRoutes from "./routes/reconciliation";
 import auditRoutes from "./routes/audit";
 import stressTestRoutes from "./routes/stressTest";
+import walletRoutes from "./routes/wallets";
+import reportRoutes from "./routes/reports";
+import approvalRoutes from "./routes/approvals";
+import successRateRoutes from "./routes/successRate";
+import regionalFeeRoutes from "./routes/regionalFees";
+import webhookRoutes from "./routes/webhooks";
+import traceRoutes from "./routes/traces";
+import verificationRoutes from "./routes/verification";
+import analyticsRoutes from "./routes/analytics";
+import thresholdRoutes from "./routes/thresholds";
 import { config } from "./config";
 import { logger } from "./logger";
 import { createContainer } from "./container";
@@ -86,15 +99,26 @@ export async function buildApp() {
   await app.register(contractRoutes, { prefix });
   await app.register(refundsRoutes, { prefix });
   await app.register(notificationRoutes, { prefix });
+  await app.register(receiptRoutes, { prefix });
+  await app.register(securityEventsRoutes, { prefix });
+
+  await app.register(walletRoutes, { prefix });
+  await app.register(reportRoutes, { prefix });
   await app.register(complianceRoutes, { prefix });
   await app.register(errorRoutes, { prefix });
   await app.register(feeRoutes, { prefix });
   await app.register(reconciliationRoutes, { prefix });
   await app.register(auditRoutes, { prefix });
   await app.register(stressTestRoutes, { prefix });
+  await app.register(approvalRoutes, { prefix });
+  await app.register(successRateRoutes, { prefix });
+  await app.register(regionalFeeRoutes, { prefix });
+  await app.register(traceRoutes, { prefix });
+  await app.register(verificationRoutes, { prefix });
+  await app.register(analyticsRoutes, { prefix });
+  await app.register(thresholdRoutes, { prefix });
 
   app.addHook("onResponse", async (request, reply) => {
-    const start = request.elapsedTime ?? 0;
     const latencyMs = Math.round(reply.elapsedTime ?? 0);
     if (latencyMs > 0) {
       try {

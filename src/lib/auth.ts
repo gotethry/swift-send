@@ -13,6 +13,19 @@ interface UserDto {
   isVerified: boolean;
   onboardingCompleted: boolean;
   walletAddress?: string;
+  accountType?: 'personal' | 'business';
+  businessProfile?: {
+    companyName: string;
+    role: 'owner' | 'finance_admin' | 'operator';
+    teamSize: number;
+    permissions: string[];
+    teamMembers: Array<{
+      name: string;
+      email: string;
+      role: 'owner' | 'admin' | 'approver' | 'viewer';
+      status: 'active' | 'invited';
+    }>;
+  };
   createdAt: string;
 }
 
@@ -23,6 +36,36 @@ interface AuthResponse {
   needsVerification?: boolean;
   isNewUser?: boolean;
   session: AuthSessionInfo;
+}
+
+interface StepUpResponse {
+  ok: boolean;
+  authUser: AuthUser;
+  user?: UserDto | null;
+  session: AuthSessionInfo;
+}
+
+interface BusinessTeamMemberInput {
+  name: string;
+  email: string;
+  role: 'owner' | 'admin' | 'approver' | 'viewer';
+  status: 'active' | 'invited';
+}
+
+interface BusinessProfileInput {
+  companyName: string;
+  role: 'owner' | 'finance_admin' | 'operator';
+  teamMembers: BusinessTeamMemberInput[];
+}
+
+interface OnboardingCompletionPayload {
+  name?: string;
+  email?: string;
+  phone?: string;
+  accountType?: 'personal' | 'business';
+  companyName?: string;
+  role?: 'owner' | 'finance_admin' | 'operator';
+  teamMembers?: BusinessTeamMemberInput[];
 }
 
 async function requireJson<T>(response: Response, fallbackMessage: string): Promise<T> {
@@ -85,6 +128,14 @@ export async function verifyCode(code: string): Promise<AuthResponse> {
   return requireJson<AuthResponse>(response, 'Unable to verify code');
 }
 
+export async function stepUpVerifyCode(code: string): Promise<StepUpResponse> {
+  const response = await apiFetch('/auth/step-up/verify', {
+    method: 'POST',
+    body: JSON.stringify({ code }),
+  });
+  return requireJson<StepUpResponse>(response, 'Unable to complete verification');
+}
+
 export async function resendCode(): Promise<{ ok: boolean; message: string }> {
   const response = await apiFetch('/auth/resend', {
     method: 'POST',
@@ -104,12 +155,20 @@ export async function authMe(): Promise<AuthResponse> {
   return requireJson<AuthResponse>(response, 'Unable to restore session');
 }
 
-export async function completeOnboarding(userData: Partial<User>): Promise<AuthResponse> {
+export async function completeOnboarding(userData: OnboardingCompletionPayload): Promise<AuthResponse> {
   const response = await apiFetch('/auth/onboarding/complete', {
     method: 'POST',
     body: JSON.stringify(userData),
   });
   return requireJson<AuthResponse>(response, 'Unable to complete onboarding');
+}
+
+export async function updateBusinessProfile(profile: BusinessProfileInput): Promise<AuthResponse> {
+  const response = await apiFetch('/auth/business/profile', {
+    method: 'POST',
+    body: JSON.stringify(profile),
+  });
+  return requireJson<AuthResponse>(response, 'Unable to update business profile');
 }
 
 export async function heartbeat(): Promise<Pick<AuthResponse, 'authUser' | 'session'>> {

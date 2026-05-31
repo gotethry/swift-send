@@ -103,7 +103,32 @@ describe('TransactionItem detailed metadata (#92)', () => {
       />,
     );
 
-    expect(screen.getByText('Open in Stellar Explorer')).toBeInTheDocument();
+    expect(screen.getByText('View on Explorer')).toBeInTheDocument();
     expect(screen.getByText(/Hash:/)).toBeInTheDocument();
+  });
+
+  it('shows explorer button in main view when tx hash exists', () => {
+    render(
+      <TransactionItem
+        transaction={buildTransaction({
+          txHash: 'abc123hashxyz987654',
+        })}
+        senderName="Sender"
+      />,
+    );
+
+    expect(screen.getByText('View on Explorer')).toBeInTheDocument();
+  });
+
+  it('does not show explorer button when tx hash is missing', () => {
+    render(
+      <TransactionItem
+        transaction={buildTransaction()}
+        showDetailedView
+        senderName="Sender"
+      />,
+    );
+
+    expect(screen.queryByText('View on Explorer')).not.toBeInTheDocument();
   });
 });

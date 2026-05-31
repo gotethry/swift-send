@@ -112,18 +112,53 @@ export class TransferQueue {
           job.error = error instanceof Error ? error.message : 'Unknown error';
 
           if (job.retries < TransferQueue.MAX_JOB_RETRIES) {
+            // Use exponential backoff + jitter retry wrapper to attempt recovery without immediate re-enqueue
             job.retries += 1;
-            job.status = 'pending';
-            job.startedAt = undefined;
-            logger.warn({ retries: job.retries, error: job.error }, 'transfer job retrying');
+            logger.warn({ retries: job.retries, error: job.error }, 'transfer job will be retried with backoff');
 
-            // Re-enqueue after delay
-            const retryJob = { ...job };
-            setTimeout(() => {
-              this.queue.push(retryJob);
-              this.results.set(retryJob.id, retryJob);
-              void this.processQueue();
-            }, TransferQueue.RETRY_DELAY_MS * job.retries);
+            try {
+              const { retryWithBackoff } = await import('../../utils/retry');
+              await retryWithBackoff(
+                () => this.transfers.createTransfer(job.command),
+                {
+                  maxRetries: TransferQueue.MAX_JOB_RETRIES - job.retries,
+                  baseDelayMs: TransferQueue.RETRY_DELAY_MS,
+                  maxDelayMs: TransferQueue.RETRY_DELAY_MS * 16,
+                  timeoutMs: 20_000,
+                },
+                (evt) => {
+                  // publish metrics/events
+                  void this.eventBus.publish({ type: 'transfer.retry_event', timestamp: new Date().toISOString(), payload: { jobId: job.id, event: evt.type, data: evt.payload } });
+                },
+              );
+
+              job.status = 'completed';
+              job.completedAt = new Date().toISOString();
+              logger.info({ jobId: job.id }, 'transfer job succeeded during backoff retry');
+            } catch (retryErr) {
+              job.status = 'failed';
+              job.completedAt = new Date().toISOString();
+              job.error = retryErr instanceof Error ? retryErr.message : String(retryErr);
+              logger.error({ jobId: job.id, retries: job.retries, error: job.error }, 'transfer job failed after backoff');
+
+              if (this.deadLetterQueue) {
+                this.deadLetterQueue.addEntry(
+                  { ...job },
+                  job.error || 'Unknown error',
+                  job.retries,
+                );
+              }
+
+              await this.eventBus.publish({
+                type: TransferEventType.QueueFailed,
+                timestamp: new Date().toISOString(),
+                payload: {
+                  jobId: job.id,
+                  transferId: job.command.idempotencyKey,
+                  error: job.error,
+                },
+              });
+            }
           } else {
             job.status = 'failed';
             job.completedAt = new Date().toISOString();

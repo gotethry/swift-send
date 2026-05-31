@@ -7,6 +7,7 @@ import { requireVerifiedSession } from '../middleware/authenticate';
 
 interface ActivityQuery {
   limit?: string;
+  compact?: string;
 }
 
 interface SearchQuery {
@@ -27,7 +28,10 @@ export default async function activityRoutes(fastify: FastifyInstance) {
     async (req, reply) => {
       const session = requireSessionUser(req.user as JwtSessionPayload, reply);
       if (!session) return;
-      const limit = sanitizeLimit(req.query?.limit, 50, 100);
+      const headerCompact = req.headers['x-low-bandwidth'] === '1';
+      const queryCompact = req.query?.compact === '1' || req.query?.compact === 'true';
+      const compact = headerCompact || queryCompact;
+      const limit = sanitizeLimit(req.query?.limit, compact ? 20 : 50, compact ? 50 : 100);
       reply.header('Cache-Control', 'private, max-age=10');
       return {
         items: await fastify.container.services.activity.listTransactions(session.user!.id, limit),
@@ -102,7 +106,13 @@ export default async function activityRoutes(fastify: FastifyInstance) {
       const session = requireSessionUser(req.user as JwtSessionPayload, reply);
       if (!session) return;
       reply.header('Cache-Control', 'private, max-age=10');
-      return fastify.container.services.activity.getSpendingInsights(session.user!.id);
+      const compact = req.headers['x-low-bandwidth'] === '1';
+      const insights = await fastify.container.services.activity.getSpendingInsights(session.user!.id);
+      if (!compact) {
+        return insights;
+      }
+      // Compact view: keep only the summary for low-bandwidth clients.
+      return { summary: insights.summary };
     },
   );
 
