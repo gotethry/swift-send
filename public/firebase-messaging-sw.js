@@ -39,14 +39,16 @@ self.addEventListener('notificationclick', (event) => {
   event.notification.close();
 
   const data = event.notification.data;
-  let urlToOpen = '/';
+  let urlToOpen = data?.actionUrl || data?.url || '/';
 
-  // Route based on notification type
-  if (data.type === 'transfer_settled' || data.type === 'transfer_failed') {
-    if (data.transferId) {
-      urlToOpen = `/history?transferId=${data.transferId}`;
-    } else {
-      urlToOpen = '/history';
+  if (urlToOpen === '/') {
+    // Fallback route based on notification type
+    if (data.type === 'transfer_settled' || data.type === 'transfer_failed') {
+      urlToOpen = data.transferId ? `/history?transferId=${data.transferId}` : '/history';
+    } else if (String(data.type || '').startsWith('escrow_')) {
+      urlToOpen = data.transferId
+        ? `/admin/operations?tab=escrow&transferId=${data.transferId}`
+        : '/admin/operations?tab=escrow';
     }
   }
 

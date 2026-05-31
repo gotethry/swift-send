@@ -1,12 +1,20 @@
 import { FastifyInstance } from 'fastify';
 import { requireVerifiedSession } from '../middleware/authenticate';
+import { requireRole } from '../middleware/requireRole';
+import { cleanupExpiredEscrows, listExpiringEscrows } from '../services/escrow';
 
 interface EscrowOverrideBody {
   destination_account?: string;
   reason?: string;
 }
 
+interface EscrowReviewQuery {
+  hours?: string;
+}
+
 export default async function escrowRoutes(fastify: FastifyInstance) {
+  const adminGuards = { preHandler: [requireVerifiedSession, requireRole('admin')] };
+
   fastify.get('/escrow/:transferId', { preHandler: [requireVerifiedSession] }, async (req, reply) => {
     const transferId = (req.params as { transferId: string }).transferId;
     const escrow = await fastify.container.services.wallets.getEscrow(transferId);
@@ -102,5 +110,36 @@ export default async function escrowRoutes(fastify: FastifyInstance) {
       const statusCode = err?.statusCode || (err?.code === 'escrow_already_finalized' ? 409 : 500);
       return reply.status(statusCode).send({ error: err?.message || 'Dispute failed', code: err?.code });
     }
+  });
+
+  fastify.get<{ Querystring: EscrowReviewQuery }>(
+    '/admin/escrow/expiring',
+    adminGuards,
+    async (req) => {
+      const hours = Number(req.query.hours || 24);
+      return listExpiringEscrows(hours);
+    },
+  );
+
+  fastify.post('/admin/escrow/cleanup-expired', adminGuards, async () => {
+    const expiredEscrows = await cleanupExpiredEscrows();
+    await Promise.all(
+      expiredEscrows
+        .filter((escrow) => escrow.userId)
+        .map((escrow) =>
+          fastify.container.services.notification.notifyEscrowExpired({
+            userId: escrow.userId as string,
+            transferId: escrow.transferId,
+            amount: escrow.amount,
+            currency: escrow.currency,
+          }),
+        ),
+    );
+
+    return {
+      success: true,
+      expiredCount: expiredEscrows.length,
+      items: expiredEscrows,
+    };
   });
 }
